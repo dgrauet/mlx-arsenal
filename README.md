@@ -2,10 +2,6 @@
 
 Reusable mid-level building blocks for [MLX](https://github.com/ml-explore/mlx) — the missing layer between `mlx.nn` primitives and full model implementations.
 
-## Why
-
-Every MLX project (mlx-video, mflux, mlx-audio, mlx-vlm) re-implements the same building blocks: causal convolutions, multi-dimensional RoPE, adaptive layer norms, timestep embeddings, pixel shuffle, channel layout conversion, etc. `mlx-ops` extracts these into a single tested library.
-
 ## Install
 
 ```bash
