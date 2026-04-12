@@ -1,4 +1,5 @@
 import mlx.core as mx
+import mlx.nn as nn
 from mlx_ops.moe import MoEGate, MoELayer
 
 
@@ -44,3 +45,88 @@ class TestMoEGate:
         indices, weights = gate(x)
         assert indices.shape == (10, 1)
         assert weights.shape == (10, 1)
+
+
+class TestMoELayer:
+    def _make_expert_fn(self, hidden_size):
+        """Factory that creates a simple FFN expert."""
+        def expert_fn():
+            return nn.Sequential(
+                nn.Linear(hidden_size, hidden_size * 4),
+                nn.GELU(),
+                nn.Linear(hidden_size * 4, hidden_size),
+            )
+        return expert_fn
+
+    def test_output_shape(self):
+        """MoELayer preserves input shape."""
+        hidden = 64
+        layer = MoELayer(
+            hidden_size=hidden,
+            num_experts=4,
+            top_k=2,
+            expert_fn=self._make_expert_fn(hidden),
+        )
+        x = mx.random.normal((4, 10, hidden))
+        y = layer(x)
+        assert y.shape == x.shape, f"Expected {x.shape}, got {y.shape}"
+
+    def test_output_shape_with_shared_expert(self):
+        """MoELayer with shared expert preserves input shape."""
+        hidden = 64
+        shared = nn.Sequential(
+            nn.Linear(hidden, hidden * 4),
+            nn.GELU(),
+            nn.Linear(hidden * 4, hidden),
+        )
+        layer = MoELayer(
+            hidden_size=hidden,
+            num_experts=4,
+            top_k=2,
+            expert_fn=self._make_expert_fn(hidden),
+            shared_expert=shared,
+        )
+        x = mx.random.normal((4, 10, hidden))
+        y = layer(x)
+        assert y.shape == x.shape
+
+    def test_different_num_experts(self):
+        """Works with different expert counts."""
+        for n_experts in [2, 4, 8, 16]:
+            hidden = 32
+            layer = MoELayer(
+                hidden_size=hidden,
+                num_experts=n_experts,
+                top_k=2,
+                expert_fn=self._make_expert_fn(hidden),
+            )
+            x = mx.random.normal((2, 5, hidden))
+            y = layer(x)
+            mx.eval(y)
+            assert y.shape == x.shape
+
+    def test_top_k_1(self):
+        """Works with single expert selection."""
+        hidden = 32
+        layer = MoELayer(
+            hidden_size=hidden,
+            num_experts=4,
+            top_k=1,
+            expert_fn=self._make_expert_fn(hidden),
+        )
+        x = mx.random.normal((2, 5, hidden))
+        y = layer(x)
+        assert y.shape == x.shape
+
+    def test_single_token(self):
+        """Works with single token input."""
+        hidden = 32
+        layer = MoELayer(
+            hidden_size=hidden,
+            num_experts=4,
+            top_k=2,
+            expert_fn=self._make_expert_fn(hidden),
+        )
+        x = mx.random.normal((1, 1, hidden))
+        y = layer(x)
+        assert y.shape == x.shape
