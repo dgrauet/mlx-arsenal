@@ -2,4 +2,4 @@
 
 __version__ = "0.1.0"
 
-from . import encoding, moe
+from . import encoding, moe, rasterize
