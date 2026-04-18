@@ -51,3 +51,11 @@ class TestTemporalSliceProcess:
         out = temporal_slice_process(x, fn=lambda t: t, window_size=8, overlap=4)
         mx.eval(out)
         assert mx.allclose(out, x, atol=1e-4)
+
+    def test_unaligned_length_appends_final_window(self):
+        # T=30, window_size=8, overlap=2 -> stride=6. Iter starts = [0,6,12,18].
+        # Last covers 18..26 < 30, so the final-window append path runs.
+        x = mx.random.normal((1, 30, 4, 4, 3))
+        out = temporal_slice_process(x, fn=lambda t: t, window_size=8, overlap=2)
+        assert out.shape == (1, 30, 4, 4, 3)
+        assert mx.allclose(out, x, atol=1e-4).item()

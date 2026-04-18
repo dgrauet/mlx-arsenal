@@ -28,6 +28,19 @@ class TestSingleTriangle:
             [[0, 1, 2]],
         )
 
+    def test_depth_prior_provided(self):
+        # Passing a depth_prior takes the explicit branch (non-default path).
+        # Use a prior matching the default sentinel (very small) so the z-test
+        # is effectively a no-op and we still see the triangle.
+        prior = mx.full((self.height, self.width), -1e30, dtype=mx.float32)
+        fi, bary = rasterize_triangles(
+            self.vertices, self.faces, self.width, self.height, depth_prior=prior
+        )
+        mx.synchronize()
+        assert fi.shape == (self.height, self.width)
+        assert bary.shape == (self.height, self.width, 3)
+        assert (fi > 0).astype(mx.int32).sum().item() > 0
+
     def test_face_indices_nonzero(self):
         fi, bary = rasterize_triangles(self.vertices, self.faces, self.width, self.height)
         mx.synchronize()

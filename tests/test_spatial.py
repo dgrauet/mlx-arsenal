@@ -29,6 +29,14 @@ class TestPatchify2d:
         mx.eval(x, reconstructed)
         assert mx.allclose(x, reconstructed, atol=1e-5)
 
+    def test_tuple_patch_size_roundtrip(self):
+        # Non-square patch via tuple — exercises the tuple-unpack branch.
+        x = mx.random.normal((1, 6, 8, 3))
+        patches = patchify(x, patch_size=(3, 4))
+        assert patches.shape == (1, 2 * 2, 3 * 4 * 3)
+        reconstructed = unpatchify(patches, patch_size=(3, 4), shape=(6, 8))
+        assert mx.allclose(x, reconstructed, atol=1e-5).item()
+
 
 class TestPatchify3d:
     def test_basic(self):
@@ -44,6 +52,14 @@ class TestPatchify3d:
         reconstructed = unpatchify(patches, patch_size=(2, 4, 4), shape=(4, 8, 8))
         mx.eval(x, reconstructed)
         assert mx.allclose(x, reconstructed, atol=1e-5)
+
+    def test_int_patch_size_roundtrip(self):
+        # Uniform int patch_size — exercises the int-broadcast branch.
+        x = mx.random.normal((1, 4, 8, 8, 3))
+        patches = patchify(x, patch_size=2)
+        assert patches.shape == (1, 2 * 4 * 4, 2 * 2 * 2 * 3)
+        reconstructed = unpatchify(patches, patch_size=2, shape=(4, 8, 8))
+        assert mx.allclose(x, reconstructed, atol=1e-5).item()
 
 
 class TestPatchEmbed2d:
@@ -64,6 +80,14 @@ class TestPatchEmbed3d:
         mx.eval(out)
         # 8/2=4, 32/16=2, 32/16=2 -> 16 patches
         assert out.shape == (1, 16, 512)
+
+    def test_int_patch_size(self):
+        # Int patch_size should broadcast to (patch_size, patch_size, patch_size).
+        embed = PatchEmbed3d(in_channels=3, embed_dim=64, patch_size=4)
+        x = mx.random.normal((1, 8, 8, 8, 3))
+        out = embed(x)
+        # 8/4=2 per dim -> 2*2*2 = 8 patches
+        assert out.shape == (1, 8, 64)
 
 
 class TestUpsampleNearest:

@@ -51,6 +51,17 @@ class TestInterpolateNearest:
         assert out[0, 1, 0].item() == 0.0
         assert out[0, 2, 0].item() == 1.0
 
+    def test_noop_when_no_args(self):
+        x = mx.random.normal((1, 4, 4, 3))
+        out = interpolate_nearest(x)
+        assert out.shape == x.shape
+        assert mx.array_equal(out, x).item()
+
+    def test_int_size_broadcasts(self):
+        x = mx.random.normal((1, 4, 4, 3))
+        out = interpolate_nearest(x, size=8)
+        assert out.shape == (1, 8, 8, 3)
+
 
 class TestInterpolate3d:
     def test_shape(self):
