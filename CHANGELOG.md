@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-04-18
+
+### Fixed
+- `mlx_arsenal.__version__` is now read from installed package metadata
+  via `importlib.metadata`, so it stays in sync with `pyproject.toml`
+  (previously hard-coded and left stale at 0.2.0 through the 0.2.1 release).
+
 ## [0.2.1] — 2026-04-18
 
 ### Changed
@@ -45,7 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tiling` — `tiled_process`, `temporal_slice_process` for memory-efficient
   large-tensor processing.
 
-[Unreleased]: https://github.com/dgrauet/mlx-arsenal/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/dgrauet/mlx-arsenal/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/dgrauet/mlx-arsenal/releases/tag/v0.2.2
 [0.2.1]: https://github.com/dgrauet/mlx-arsenal/releases/tag/v0.2.1
 [0.2.0]: https://github.com/dgrauet/mlx-arsenal/releases/tag/v0.2.0
 [0.1.0]: https://github.com/dgrauet/mlx-arsenal/releases/tag/v0.1.0
