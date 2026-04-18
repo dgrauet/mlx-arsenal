@@ -129,7 +129,11 @@ def _get_rasterize_kernel():
         _rasterize_kernel = mx.fast.metal_kernel(
             name="rasterize_perpixel_kernel",
             input_names=[
-                "screen_verts", "faces", "depth_prior", "dims", "fparams",
+                "screen_verts",
+                "faces",
+                "depth_prior",
+                "dims",
+                "fparams",
             ],
             output_names=["findices", "barycentric_out"],
             source=RASTERIZE_SOURCE,
@@ -172,9 +176,9 @@ def rasterize_triangles(
     screen_x = (v[:, 0:1] / w_clip * 0.5 + 0.5) * (width - 1) + 0.5
     screen_y = (0.5 + 0.5 * v[:, 1:2] / w_clip) * (height - 1) + 0.5
     screen_z = v[:, 2:3] / w_clip * 0.49999 + 0.5
-    screen_verts = mx.concatenate(
-        [screen_x, screen_y, screen_z, w_clip], axis=1
-    ).reshape(-1)  # (N*4,) float32
+    screen_verts = mx.concatenate([screen_x, screen_y, screen_z, w_clip], axis=1).reshape(
+        -1
+    )  # (N*4,) float32
 
     faces_flat = faces.reshape(-1).astype(mx.int32)
 

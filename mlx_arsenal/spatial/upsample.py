@@ -83,7 +83,7 @@ def upsample_bilinear(x: mx.array, scale_factor: int = 2) -> mx.array:
     c0 = mx.expand_dims(c0, 0)  # (1, new_w)
     c1 = mx.expand_dims(c1, 0)
 
-    top_left = x[:, r0, c0, :]       # (B, new_h, new_w, C)
+    top_left = x[:, r0, c0, :]  # (B, new_h, new_w, C)
     top_right = x[:, r0, c1, :]
     bottom_left = x[:, r1, c0, :]
     bottom_right = x[:, r1, c1, :]

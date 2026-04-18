@@ -1,5 +1,10 @@
 # mlx-arsenal
 
+[![PyPI version](https://img.shields.io/pypi/v/mlx-arsenal.svg)](https://pypi.org/project/mlx-arsenal/)
+[![CI](https://github.com/dgrauet/mlx-arsenal/actions/workflows/ci.yml/badge.svg)](https://github.com/dgrauet/mlx-arsenal/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/pypi/pyversions/mlx-arsenal.svg)](https://pypi.org/project/mlx-arsenal/)
+[![License](https://img.shields.io/pypi/l/mlx-arsenal.svg)](https://github.com/dgrauet/mlx-arsenal/blob/main/LICENSE)
+
 Low-level operations and reusable building blocks missing from [MLX](https://github.com/ml-explore/mlx) core — the toolbox you want when porting PyTorch models to Apple Silicon.
 
 ## Install

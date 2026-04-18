@@ -1,6 +1,5 @@
 """Patchify/Unpatchify operations and patch embedding layers."""
 
-
 import mlx.core as mx
 import mlx.nn as nn
 
@@ -115,8 +114,11 @@ class PatchEmbed2d(nn.Module):
             patch_size = (patch_size, patch_size)
         self.patch_size = patch_size
         self.proj = nn.Conv2d(
-            in_channels, embed_dim,
-            kernel_size=patch_size, stride=patch_size, bias=bias,
+            in_channels,
+            embed_dim,
+            kernel_size=patch_size,
+            stride=patch_size,
+            bias=bias,
         )
 
     def __call__(self, x: mx.array) -> mx.array:
@@ -157,8 +159,11 @@ class PatchEmbed3d(nn.Module):
             patch_size = (patch_size, patch_size, patch_size)
         self.patch_size = patch_size
         self.proj = nn.Conv3d(
-            in_channels, embed_dim,
-            kernel_size=patch_size, stride=patch_size, bias=bias,
+            in_channels,
+            embed_dim,
+            kernel_size=patch_size,
+            stride=patch_size,
+            bias=bias,
         )
 
     def __call__(self, x: mx.array) -> mx.array:

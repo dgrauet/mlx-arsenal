@@ -37,9 +37,7 @@ class MoEGate(nn.Module):
             # All experts selected; just use argsort
             indices = mx.argsort(-scores, axis=-1)[:, : self.top_k]
         else:
-            indices = mx.argpartition(-scores, kth=self.top_k, axis=-1)[
-                :, : self.top_k
-            ]
+            indices = mx.argpartition(-scores, kth=self.top_k, axis=-1)[:, : self.top_k]
         weights = mx.take_along_axis(scores, indices, axis=-1)
         return indices, weights
 

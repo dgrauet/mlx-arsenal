@@ -51,7 +51,8 @@ def interpolate_nearest(
             continue
         indices = mx.clip(
             (mx.arange(tgt_size) * src_size) // tgt_size,
-            0, src_size - 1,
+            0,
+            src_size - 1,
         )
         # Gather along this dimension
         slices = [slice(None)] * result.ndim
@@ -104,7 +105,7 @@ def avg_pool1d(
     windows = []
     for i in range(L_out):
         start = i * stride
-        windows.append(x[:, start:start + kernel_size])
+        windows.append(x[:, start : start + kernel_size])
 
     # Stack and mean: (B, L_out, kernel_size, C) -> (B, L_out, C)
     stacked = mx.stack(windows, axis=1)

@@ -51,12 +51,14 @@ class TestMoEGate:
 class TestMoELayer:
     def _make_expert_fn(self, hidden_size):
         """Factory that creates a simple FFN expert."""
+
         def expert_fn():
             return nn.Sequential(
                 nn.Linear(hidden_size, hidden_size * 4),
                 nn.GELU(),
                 nn.Linear(hidden_size * 4, hidden_size),
             )
+
         return expert_fn
 
     def test_output_shape(self):

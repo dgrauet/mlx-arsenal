@@ -30,5 +30,8 @@ jobs:
       - name: Lint with ruff
         run: ruff check mlx_arsenal tests
 
+      - name: Check formatting with ruff
+        run: ruff format --check mlx_arsenal tests
+
       - name: Run tests
         run: pytest tests/ -v

@@ -27,9 +27,5 @@ def interpolate(
     v1 = attributes[tri_verts[..., 1]]
     v2 = attributes[tri_verts[..., 2]]
 
-    result = (
-        barycentric[..., 0:1] * v0
-        + barycentric[..., 1:2] * v1
-        + barycentric[..., 2:3] * v2
-    )
+    result = barycentric[..., 0:1] * v0 + barycentric[..., 1:2] * v1 + barycentric[..., 2:3] * v2
     return result

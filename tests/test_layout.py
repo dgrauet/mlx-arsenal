@@ -5,6 +5,7 @@ import mlx.core as mx
 from mlx_arsenal.layout import (
     channels_last,
     convert_conv_weights,
+    load_safetensors,
     to_channels_first,
     to_channels_last,
 )
@@ -66,3 +67,36 @@ class TestConvertConvWeights:
         converted = convert_conv_weights(w)
         mx.eval(converted)
         assert converted.shape == (8, 3, 3, 3, 4)  # (O, kD, kH, kW, I)
+
+
+class TestLoadSafetensors:
+    def _write(self, tmp_path, tensors):
+        path = tmp_path / "weights.safetensors"
+        mx.save_safetensors(str(path), tensors)
+        return path
+
+    def test_roundtrip(self, tmp_path):
+        src = {"a": mx.ones((2, 3)), "b": mx.zeros((4,))}
+        path = self._write(tmp_path, src)
+        out = load_safetensors(str(path))
+        assert set(out.keys()) == {"a", "b"}
+        assert mx.array_equal(out["a"], src["a"]).item()
+        assert mx.array_equal(out["b"], src["b"]).item()
+
+    def test_key_map(self, tmp_path):
+        src = {"old.name": mx.ones((2,))}
+        path = self._write(tmp_path, src)
+        out = load_safetensors(str(path), key_map={"old.name": "new.name"})
+        assert "new.name" in out and "old.name" not in out
+
+    def test_key_fn(self, tmp_path):
+        src = {"module.weight": mx.ones((2,))}
+        path = self._write(tmp_path, src)
+        out = load_safetensors(str(path), key_fn=lambda k: k.replace("module.", ""))
+        assert list(out.keys()) == ["weight"]
+
+    def test_conv_keys_permuted(self, tmp_path):
+        src = {"conv.weight": mx.random.normal((8, 4, 3, 3))}
+        path = self._write(tmp_path, src)
+        out = load_safetensors(str(path), conv_keys={"conv.weight"})
+        assert out["conv.weight"].shape == (8, 3, 3, 4)

@@ -29,9 +29,7 @@ class TestSingleTriangle:
         )
 
     def test_face_indices_nonzero(self):
-        fi, bary = rasterize_triangles(
-            self.vertices, self.faces, self.width, self.height
-        )
+        fi, bary = rasterize_triangles(self.vertices, self.faces, self.width, self.height)
         mx.synchronize()
         assert fi.shape == (self.height, self.width)
         assert bary.shape == (self.height, self.width, 3)
@@ -40,9 +38,7 @@ class TestSingleTriangle:
         assert covered > 0, "No pixels covered by the triangle"
 
     def test_barycentric_sum_to_one(self):
-        fi, bary = rasterize_triangles(
-            self.vertices, self.faces, self.width, self.height
-        )
+        fi, bary = rasterize_triangles(self.vertices, self.faces, self.width, self.height)
         mx.synchronize()
 
         covered_mask = (fi > 0).astype(mx.float32)  # (H, W) 0/1
@@ -58,9 +54,7 @@ class TestSingleTriangle:
         assert max_error < 1e-4, f"Max bary sum error on covered pixels: {max_error}"
 
     def test_background_is_zero(self):
-        fi, bary = rasterize_triangles(
-            self.vertices, self.faces, self.width, self.height
-        )
+        fi, bary = rasterize_triangles(self.vertices, self.faces, self.width, self.height)
         mx.synchronize()
 
         bg_mask = (fi == 0).astype(mx.float32)  # (H, W)
@@ -119,12 +113,18 @@ class TestCubeMesh:
             _clip_vertex(-s, s, z_back),
         ]
         face_list = [
-            [0, 1, 2], [0, 2, 3],
-            [5, 4, 7], [5, 7, 6],
-            [4, 0, 3], [4, 3, 7],
-            [1, 5, 6], [1, 6, 2],
-            [3, 2, 6], [3, 6, 7],
-            [4, 5, 1], [4, 1, 0],
+            [0, 1, 2],
+            [0, 2, 3],
+            [5, 4, 7],
+            [5, 7, 6],
+            [4, 0, 3],
+            [4, 3, 7],
+            [1, 5, 6],
+            [1, 6, 2],
+            [3, 2, 6],
+            [3, 6, 7],
+            [4, 5, 1],
+            [4, 1, 0],
         ]
 
         vertices, faces = _make_triangle_mesh(verts, face_list)
