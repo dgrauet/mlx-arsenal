@@ -1,7 +1,7 @@
 from mlx_arsenal.layout.channels import (
-    to_channels_last,
-    to_channels_first,
     channels_last,
+    to_channels_first,
+    to_channels_last,
 )
 from mlx_arsenal.layout.weights import (
     convert_conv_weights,

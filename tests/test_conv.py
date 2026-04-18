@@ -2,7 +2,6 @@
 
 import mlx.core as mx
 import mlx.nn as nn
-import pytest
 
 from mlx_arsenal.conv import weight_norm
 

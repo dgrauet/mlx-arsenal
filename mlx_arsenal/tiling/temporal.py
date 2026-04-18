@@ -4,7 +4,7 @@ Processes video tensors in overlapping temporal windows, useful for
 VAE encoding/decoding of long videos that don't fit in memory at once.
 """
 
-from typing import Callable
+from collections.abc import Callable
 
 import mlx.core as mx
 

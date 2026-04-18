@@ -5,7 +5,7 @@ and blends them back together. Useful for VAE encoding/decoding of
 high-resolution images/video that exceed memory limits.
 """
 
-from typing import Callable
+from collections.abc import Callable
 
 import mlx.core as mx
 

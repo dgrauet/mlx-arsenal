@@ -1,9 +1,8 @@
 """Tests for tiling module."""
 
 import mlx.core as mx
-import pytest
 
-from mlx_arsenal.tiling import tiled_process, temporal_slice_process
+from mlx_arsenal.tiling import temporal_slice_process, tiled_process
 
 
 class TestTiledProcess:

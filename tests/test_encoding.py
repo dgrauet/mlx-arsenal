@@ -1,4 +1,5 @@
 import mlx.core as mx
+
 from mlx_arsenal.encoding import FourierEmbedder
 
 

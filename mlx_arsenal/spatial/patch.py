@@ -1,12 +1,11 @@
 """Patchify/Unpatchify operations and patch embedding layers."""
 
-from typing import Union
 
 import mlx.core as mx
 import mlx.nn as nn
 
 
-def patchify(x: mx.array, patch_size: Union[tuple, int]) -> mx.array:
+def patchify(x: mx.array, patch_size: tuple | int) -> mx.array:
     """Convert spatial input into a sequence of flattened patches.
 
     Args:
@@ -48,7 +47,7 @@ def patchify(x: mx.array, patch_size: Union[tuple, int]) -> mx.array:
 
 def unpatchify(
     x: mx.array,
-    patch_size: Union[tuple, int],
+    patch_size: tuple | int,
     shape: tuple,
 ) -> mx.array:
     """Reconstruct spatial tensor from a sequence of patches.
@@ -108,7 +107,7 @@ class PatchEmbed2d(nn.Module):
         self,
         in_channels: int = 3,
         embed_dim: int = 768,
-        patch_size: Union[int, tuple] = 16,
+        patch_size: int | tuple = 16,
         bias: bool = True,
     ):
         super().__init__()
@@ -150,7 +149,7 @@ class PatchEmbed3d(nn.Module):
         self,
         in_channels: int = 3,
         embed_dim: int = 768,
-        patch_size: Union[int, tuple] = (2, 16, 16),
+        patch_size: int | tuple = (2, 16, 16),
         bias: bool = True,
     ):
         super().__init__()

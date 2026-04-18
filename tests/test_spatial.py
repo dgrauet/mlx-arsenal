@@ -1,17 +1,16 @@
 """Tests for spatial module."""
 
 import mlx.core as mx
-import pytest
 
 from mlx_arsenal.spatial import (
-    patchify,
-    unpatchify,
     PatchEmbed2d,
     PatchEmbed3d,
-    upsample_nearest,
-    upsample_bilinear,
+    patchify,
     pixel_shuffle,
     pixel_unshuffle,
+    unpatchify,
+    upsample_bilinear,
+    upsample_nearest,
 )
 
 

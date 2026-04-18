@@ -1,7 +1,6 @@
 """Weight conversion utilities for loading PyTorch models into MLX."""
 
-from typing import Callable, Optional
-from pathlib import Path
+from collections.abc import Callable
 
 import mlx.core as mx
 
@@ -41,9 +40,9 @@ def convert_conv_weights(weight: mx.array) -> mx.array:
 
 def load_safetensors(
     path: str,
-    key_map: Optional[dict] = None,
-    key_fn: Optional[Callable[[str], str]] = None,
-    conv_keys: Optional[set] = None,
+    key_map: dict | None = None,
+    key_fn: Callable[[str], str] | None = None,
+    conv_keys: set | None = None,
 ) -> dict:
     """Load safetensors weights with optional key remapping and conv conversion.
 

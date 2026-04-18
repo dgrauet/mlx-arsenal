@@ -4,7 +4,6 @@ Implements weight normalization (Salimans & Kingma, 2016) as a wrapper
 that reparameterizes a weight tensor as w = g * (v / ||v||).
 """
 
-import math
 
 import mlx.core as mx
 import mlx.nn as nn

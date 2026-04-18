@@ -1,13 +1,12 @@
 """Tests for layout module."""
 
 import mlx.core as mx
-import pytest
 
 from mlx_arsenal.layout import (
-    to_channels_last,
-    to_channels_first,
     channels_last,
     convert_conv_weights,
+    to_channels_first,
+    to_channels_last,
 )
 
 
