@@ -86,7 +86,7 @@ def dynamic_shift_schedule(
     return sigmas.tolist()
 
 
-class FlowMatchEulerScheduler:
+class FlowMatchEulerDiscreteScheduler:
     """Stateful flow-matching Euler scheduler.
 
     Mirrors the diffusers ``FlowMatchEulerDiscreteScheduler`` API: ``set_timesteps``

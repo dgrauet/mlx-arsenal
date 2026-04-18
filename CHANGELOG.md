@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-04-18
+
+### Changed
+- Renamed `FlowMatchEulerScheduler` → `FlowMatchEulerDiscreteScheduler` to match
+  the diffusers convention. No behavior change.
+
 ## [0.2.0] — 2026-04-18
 
 ### Added
@@ -39,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tiling` — `tiled_process`, `temporal_slice_process` for memory-efficient
   large-tensor processing.
 
-[Unreleased]: https://github.com/dgrauet/mlx-arsenal/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/dgrauet/mlx-arsenal/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/dgrauet/mlx-arsenal/releases/tag/v0.2.1
 [0.2.0]: https://github.com/dgrauet/mlx-arsenal/releases/tag/v0.2.0
 [0.1.0]: https://github.com/dgrauet/mlx-arsenal/releases/tag/v0.1.0

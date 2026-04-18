@@ -29,7 +29,7 @@ pip install git+https://github.com/dgrauet/mlx-arsenal.git
 | `mlx_arsenal.attention` | `causal_mask`, `sliding_window_mask` | Attention mask creation |
 | `mlx_arsenal.norm` | `PixelNorm`, `ScaleNorm` | Custom normalization layers |
 | `mlx_arsenal.encoding` | `FourierEmbedder` | Sinusoidal positional encoding |
-| `mlx_arsenal.diffusion` | `get_timestep_embedding`, `TimestepEmbedding`, `get_sampling_sigmas`, `dynamic_shift_schedule`, `FlowMatchEulerScheduler`, `euler_step`, `classifier_free_guidance` | Flow-matching diffusion primitives |
+| `mlx_arsenal.diffusion` | `get_timestep_embedding`, `TimestepEmbedding`, `get_sampling_sigmas`, `dynamic_shift_schedule`, `FlowMatchEulerDiscreteScheduler`, `euler_step`, `classifier_free_guidance` | Flow-matching diffusion primitives |
 | `mlx_arsenal.moe` | `MoEGate`, `MoELayer` | Top-k mixture-of-experts dispatch |
 | `mlx_arsenal.rasterize` | `rasterize_triangles`, `interpolate` | Differentiable triangle rasterization with Metal z-buffer |
 | `mlx_arsenal.tiling` | `tiled_process`, `temporal_slice_process` | Memory-efficient large tensor processing |

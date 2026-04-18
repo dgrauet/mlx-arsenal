@@ -6,7 +6,7 @@ import mlx.core as mx
 import pytest
 
 from mlx_arsenal.diffusion import (
-    FlowMatchEulerScheduler,
+    FlowMatchEulerDiscreteScheduler,
     TimestepEmbedding,
     classifier_free_guidance,
     dynamic_shift_schedule,
@@ -97,20 +97,20 @@ class TestDynamicShiftSchedule:
         assert sigmas[-1] == pytest.approx(0.0)
 
 
-class TestFlowMatchEulerScheduler:
+class TestFlowMatchEulerDiscreteScheduler:
     def test_set_timesteps_shapes(self):
-        sched = FlowMatchEulerScheduler(num_train_timesteps=1000, shift=1.0)
+        sched = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
         sched.set_timesteps(num_inference_steps=25)
         assert sched.sigmas.shape == (26,)
         assert sched.timesteps.shape == (25,)
 
     def test_step_without_setup_raises(self):
-        sched = FlowMatchEulerScheduler()
+        sched = FlowMatchEulerDiscreteScheduler()
         with pytest.raises(RuntimeError):
             sched.step(mx.zeros((1, 4)), mx.array([0.0]), mx.zeros((1, 4)))
 
     def test_add_noise_interpolates(self):
-        sched = FlowMatchEulerScheduler()
+        sched = FlowMatchEulerDiscreteScheduler()
         original = mx.ones((2, 4))
         noise = mx.zeros((2, 4))
         # sigma=0 → pure original
@@ -121,7 +121,7 @@ class TestFlowMatchEulerScheduler:
         assert mx.allclose(out, noise).item()
 
     def test_step_advances_index_and_moves_sample(self):
-        sched = FlowMatchEulerScheduler(num_train_timesteps=1000, shift=1.0)
+        sched = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
         sched.set_timesteps(num_inference_steps=4)
         sample = mx.zeros((1, 4))
         velocity = mx.ones((1, 4))
@@ -131,7 +131,7 @@ class TestFlowMatchEulerScheduler:
         assert (out > sample).all().item()
 
     def test_custom_sigmas_accepted(self):
-        sched = FlowMatchEulerScheduler(num_train_timesteps=1000, shift=1.0)
+        sched = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
         sched.set_timesteps(num_inference_steps=3, sigmas=[0.1, 0.5, 0.9])
         # 3 sigmas + terminal 1.0 = 4
         assert sched.sigmas.shape == (4,)
