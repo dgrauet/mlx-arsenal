@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-04-18
+
+### Added
+- `diffusion` — flow-matching diffusion primitives shared across ports of
+  LTX-2, Hunyuan3D-2.1, Matrix-Game, and VideoX-Fun:
+  - `get_timestep_embedding`, `TimestepEmbedding` — sinusoidal embeddings + MLP projection.
+  - `get_sampling_sigmas`, `dynamic_shift_schedule` — flow-matching sigma schedules
+    (fixed-shift and token-count-dependent).
+  - `FlowMatchEulerScheduler` — stateful scheduler with diffusers-style
+    `set_timesteps` / `step` / `add_noise`.
+  - `euler_step` — stateless Euler step for ``x0``-prediction models.
+  - `classifier_free_guidance` — CFG combinator.
+
 ## [0.1.0] — 2026-04-18
 
 ### Added
@@ -26,5 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tiling` — `tiled_process`, `temporal_slice_process` for memory-efficient
   large-tensor processing.
 
-[Unreleased]: https://github.com/dgrauet/mlx-arsenal/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dgrauet/mlx-arsenal/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dgrauet/mlx-arsenal/releases/tag/v0.2.0
 [0.1.0]: https://github.com/dgrauet/mlx-arsenal/releases/tag/v0.1.0
