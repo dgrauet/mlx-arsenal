@@ -1,6 +1,6 @@
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_ops.moe import MoEGate, MoELayer
+from mlx_arsenal.moe import MoEGate, MoELayer
 
 
 class TestImports:

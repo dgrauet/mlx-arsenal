@@ -4,7 +4,7 @@ import mlx.core as mx
 import mlx.nn as nn
 import pytest
 
-from mlx_ops.conv import weight_norm
+from mlx_arsenal.conv import weight_norm
 
 
 class TestWeightNorm:

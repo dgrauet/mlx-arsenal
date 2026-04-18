@@ -3,7 +3,7 @@
 import mlx.core as mx
 import pytest
 
-from mlx_ops.layout import (
+from mlx_arsenal.layout import (
     to_channels_last,
     to_channels_first,
     channels_last,

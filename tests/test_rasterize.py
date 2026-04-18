@@ -3,7 +3,7 @@
 import mlx.core as mx
 import pytest
 
-from mlx_ops.rasterize import rasterize_triangles, interpolate
+from mlx_arsenal.rasterize import rasterize_triangles, interpolate
 
 
 def _clip_vertex(x, y, z, w=1.0):

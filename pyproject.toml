@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mlx-ops"
+name = "mlx-arsenal"
 version = "0.1.0"
 description = "Reusable mid-level building blocks for MLX — the missing layer between mlx.nn and full model implementations"
 readme = "README.md"
@@ -28,12 +28,12 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/dgrauet/mlx-ops"
-Repository = "https://github.com/dgrauet/mlx-ops"
-Issues = "https://github.com/dgrauet/mlx-ops/issues"
+Homepage = "https://github.com/dgrauet/mlx-arsenal"
+Repository = "https://github.com/dgrauet/mlx-arsenal"
+Issues = "https://github.com/dgrauet/mlx-arsenal/issues"
 
 [tool.setuptools.packages.find]
-include = ["mlx_ops*"]
+include = ["mlx_arsenal*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

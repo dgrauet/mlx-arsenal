@@ -3,7 +3,7 @@
 import mlx.core as mx
 import pytest
 
-from mlx_ops.spatial import (
+from mlx_arsenal.spatial import (
     patchify,
     unpatchify,
     PatchEmbed2d,

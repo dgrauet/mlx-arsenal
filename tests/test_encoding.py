@@ -1,5 +1,5 @@
 import mlx.core as mx
-from mlx_ops.encoding import FourierEmbedder
+from mlx_arsenal.encoding import FourierEmbedder
 
 
 class TestFourierEmbedder:

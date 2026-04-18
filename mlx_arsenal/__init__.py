@@ -1,4 +1,4 @@
-"""mlx-ops: Reusable mid-level building blocks for MLX."""
+"""mlx-arsenal: Reusable mid-level building blocks for MLX."""
 
 __version__ = "0.1.0"
 

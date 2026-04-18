@@ -3,7 +3,7 @@
 import mlx.core as mx
 import pytest
 
-from mlx_ops.spatial import interpolate_nearest, interpolate_3d, avg_pool1d, replicate_pad
+from mlx_arsenal.spatial import interpolate_nearest, interpolate_3d, avg_pool1d, replicate_pad
 
 
 class TestInterpolateNearest:

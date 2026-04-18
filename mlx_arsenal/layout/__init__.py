@@ -1,9 +1,9 @@
-from mlx_ops.layout.channels import (
+from mlx_arsenal.layout.channels import (
     to_channels_last,
     to_channels_first,
     channels_last,
 )
-from mlx_ops.layout.weights import (
+from mlx_arsenal.layout.weights import (
     convert_conv_weights,
     load_safetensors,
 )

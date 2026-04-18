@@ -3,7 +3,7 @@
 import mlx.core as mx
 import pytest
 
-from mlx_ops.tiling import tiled_process, temporal_slice_process
+from mlx_arsenal.tiling import tiled_process, temporal_slice_process
 
 
 class TestTiledProcess:
