@@ -7,7 +7,7 @@
 
 Low-level operations and reusable building blocks missing from [MLX](https://github.com/ml-explore/mlx) core — the toolbox you want when porting PyTorch models to Apple Silicon.
 
-> **Tip:** if you use Claude Code for MLX ports, the [`porting-pytorch-to-mlx`](https://github.com/dgrauet/claude-skill-mlx-porting) skill teaches Claude to reach for `mlx-arsenal` submodules (`diffusion`, `spatial`, `attention`, `norm`, `encoding`, `moe`, `tiling`, etc.) before hand-rolling ops.
+> **Tip:** if you use Claude Code for MLX ports, the [`mlx-porting`](https://github.com/dgrauet/claude-skill-mlx-porting) skill teaches Claude to reach for `mlx-arsenal` submodules (`diffusion`, `spatial`, `attention`, `norm`, `encoding`, `moe`, `tiling`, etc.) before hand-rolling ops.
 
 ## Install
 
