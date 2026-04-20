@@ -152,3 +152,54 @@ class TestPixelUnshuffle:
         out = pixel_unshuffle(x, downscale_factor=2)
         mx.eval(out)
         assert out.shape == (1, 4, 4, 12)
+
+
+class TestPixelShufflePyTorchParity:
+    """Regression tests pinning channel-packing order to torch.nn.functional.pixel_shuffle.
+
+    The operation is defined as channel flatten order ``(out_channels, patch_row, patch_col)``.
+    An earlier version of this module reversed the order to ``(patch_row, patch_col, out_channels)``;
+    round-trip tests still passed, but outputs fed into downstream convs (VAE decoders, diffusion
+    unpatchify) produced checkerboard artefacts. These tests compare against a literal translation
+    of PyTorch's spec on channels-last tensors.
+    """
+
+    @staticmethod
+    def _pt_shuffle_spec(x_nhwc, r):
+        """Channels-last translation of torch.nn.functional.pixel_shuffle."""
+        import numpy as np
+
+        arr = np.array(x_nhwc).transpose(0, 3, 1, 2)
+        b, c, h, w = arr.shape
+        oc = c // (r * r)
+        arr = arr.reshape(b, oc, r, r, h, w)
+        arr = arr.transpose(0, 1, 4, 2, 5, 3)
+        arr = arr.reshape(b, oc, h * r, w * r)
+        return mx.array(arr.transpose(0, 2, 3, 1))
+
+    def test_shuffle_matches_pytorch(self):
+        """Channel j of input must map to output channel j // (r*r) at subpixel (j//r%r, j%r)."""
+        import numpy as np
+
+        r = 2
+        B, H, W, oc = 1, 4, 4, 3
+        x_np = np.zeros((B, H, W, oc * r * r), dtype=np.float32)
+        for j in range(oc * r * r):
+            x_np[..., j] = j
+        x = mx.array(x_np)
+        out = pixel_shuffle(x, upscale_factor=r)
+        expected = self._pt_shuffle_spec(x, r)
+        assert mx.allclose(out, expected, atol=1e-6)
+
+    def test_unshuffle_is_true_inverse(self):
+        """Unshuffle then shuffle must recover the input exactly."""
+        import numpy as np
+
+        r = 2
+        x = mx.array(np.random.default_rng(0).standard_normal((1, 8, 8, 3)).astype(np.float32))
+        down = pixel_unshuffle(x, downscale_factor=r)
+        up = pixel_shuffle(down, upscale_factor=r)
+        assert mx.allclose(x, up, atol=1e-6)
+
+        up_via_spec = TestPixelShufflePyTorchParity._pt_shuffle_spec(down, r)
+        assert mx.allclose(up, up_via_spec, atol=1e-6)
