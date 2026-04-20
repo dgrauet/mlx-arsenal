@@ -158,10 +158,10 @@ class TestPixelShufflePyTorchParity:
     """Regression tests pinning channel-packing order to torch.nn.functional.pixel_shuffle.
 
     The operation is defined as channel flatten order ``(out_channels, patch_row, patch_col)``.
-    An earlier version of this module reversed the order to ``(patch_row, patch_col, out_channels)``;
-    round-trip tests still passed, but outputs fed into downstream convs (VAE decoders, diffusion
-    unpatchify) produced checkerboard artefacts. These tests compare against a literal translation
-    of PyTorch's spec on channels-last tensors.
+    An earlier version reversed the order to ``(patch_row, patch_col, out_channels)``; round-trip
+    tests still passed, but outputs fed into downstream convs (VAE decoders, diffusion unpatchify)
+    produced checkerboard artefacts. These tests compare against a literal translation of
+    PyTorch's spec on channels-last tensors.
     """
 
     @staticmethod

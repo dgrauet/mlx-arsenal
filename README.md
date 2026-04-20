@@ -70,6 +70,10 @@ mask = causal_mask(seq_len=128, offset=kv_cache_len)
 ```bash
 pip install -e ".[dev]"
 pytest tests/
+
+# Optional: install the pre-commit hook so ruff runs on every `git commit`.
+pip install pre-commit
+pre-commit install
 ```
 
 ## License
