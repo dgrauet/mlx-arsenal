@@ -1,4 +1,4 @@
-"""Diffusion primitives: timestep embeddings, flow-matching schedulers, samplers."""
+"""Diffusion primitives: timestep embeddings, flow-matching schedulers, samplers, caching."""
 
 from .samplers import classifier_free_guidance, euler_step
 from .schedulers import (
@@ -6,10 +6,13 @@ from .schedulers import (
     dynamic_shift_schedule,
     get_sampling_sigmas,
 )
+from .teacache import TEACACHE_PRESETS, TeaCacheController
 from .timestep import TimestepEmbedding, get_timestep_embedding
 
 __all__ = [
     "FlowMatchEulerDiscreteScheduler",
+    "TEACACHE_PRESETS",
+    "TeaCacheController",
     "TimestepEmbedding",
     "classifier_free_guidance",
     "dynamic_shift_schedule",

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `diffusion.TeaCacheController` — timestep-aware residual caching for
+  diffusion transformers (Liu et al., *Timestep Embedding Aware Cache*).
+  Skips a transformer forward when the polyfit-rescaled L1 distance of the
+  modulated input stays below a threshold, reusing the previous residual.
+  Boundary steps (first/last) always compute.
+- `diffusion.TEACACHE_PRESETS` — registry of upstream-published polyfit
+  coefficients and default thresholds. Ships with `hunyuan_video` and `flux`;
+  per-architecture calibration recommended for production.
+
 ## [0.2.2] — 2026-04-18
 
 ### Fixed
