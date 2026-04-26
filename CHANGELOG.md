@@ -12,15 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diffusion transformers (Liu et al., *Timestep Embedding Aware Cache*).
   Skips a transformer forward when the polyfit-rescaled L1 distance of the
   modulated input stays below a threshold, reusing the previous residual.
-  Boundary steps (first/last) always compute.
-- `diffusion.TEACACHE_PRESETS` — registry of upstream-published polyfit
-  coefficients and default thresholds. Ships with `hunyuan_video` and `flux`;
-  per-architecture calibration recommended for production.
-
-### Changed
-- `TeaCacheController.cache_residual` / `previous_residual` now accept any
-  payload (previously typed as `mx.array`). Enables multi-stream / multi-pass
-  models (e.g. LTX-2) to cache a tuple or dict of residuals.
+  Boundary steps (first/last) always compute. ``cache_residual`` /
+  ``previous_residual`` accept any payload, so multi-stream / multi-pass
+  models (e.g. LTX-2) can cache a tuple or dict of residuals. Coefficients
+  and thresholds are model-specific and live with each model's port.
 
 ## [0.2.2] — 2026-04-18
 

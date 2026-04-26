@@ -6,12 +6,11 @@ from .schedulers import (
     dynamic_shift_schedule,
     get_sampling_sigmas,
 )
-from .teacache import TEACACHE_PRESETS, TeaCacheController
+from .teacache import TeaCacheController
 from .timestep import TimestepEmbedding, get_timestep_embedding
 
 __all__ = [
     "FlowMatchEulerDiscreteScheduler",
-    "TEACACHE_PRESETS",
     "TeaCacheController",
     "TimestepEmbedding",
     "classifier_free_guidance",

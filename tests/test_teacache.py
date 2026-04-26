@@ -3,7 +3,7 @@
 import mlx.core as mx
 import pytest
 
-from mlx_arsenal.diffusion import TEACACHE_PRESETS, TeaCacheController
+from mlx_arsenal.diffusion import TeaCacheController
 
 # Linear rescaling f(x) = 2x for predictable arithmetic in tests.
 LINEAR_COEFFS = [2.0, 0.0]
@@ -103,36 +103,6 @@ class TestPolyfitRescaling:
         c = make_controller(num_steps=10, rel_l1_thresh=1.0, coefficients=[3.0, 0.0, 0.0])
         c.should_compute(0, mx.full((4,), 1.0))
         assert c.should_compute(1, mx.full((4,), 1.5)) is False
-
-
-class TestPresets:
-    def test_registry_has_known_models(self):
-        assert "hunyuan_video" in TEACACHE_PRESETS
-        assert "flux" in TEACACHE_PRESETS
-
-    def test_preset_entries_well_formed(self):
-        for name, preset in TEACACHE_PRESETS.items():
-            assert "coefficients" in preset, f"{name} missing 'coefficients'"
-            assert len(preset["coefficients"]) >= 1
-            assert "rel_l1_thresh" in preset, f"{name} missing 'rel_l1_thresh'"
-
-    def test_from_preset_constructs_controller(self):
-        c = TeaCacheController.from_preset("hunyuan_video", num_steps=50)
-        assert isinstance(c, TeaCacheController)
-        assert c.num_steps == 50
-
-    def test_from_preset_uses_preset_coefficients(self):
-        preset = TEACACHE_PRESETS["hunyuan_video"]
-        c = TeaCacheController.from_preset("hunyuan_video", num_steps=50)
-        assert list(c.coefficients) == list(preset["coefficients"])
-
-    def test_from_preset_threshold_override(self):
-        c = TeaCacheController.from_preset("hunyuan_video", num_steps=50, rel_l1_thresh=0.25)
-        assert c.rel_l1_thresh == 0.25
-
-    def test_from_preset_unknown_raises(self):
-        with pytest.raises(KeyError):
-            TeaCacheController.from_preset("not-a-real-model", num_steps=10)
 
 
 class TestEndToEndCacheReuse:

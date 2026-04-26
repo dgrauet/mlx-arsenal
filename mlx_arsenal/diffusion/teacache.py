@@ -5,8 +5,9 @@ inference by reusing a cached residual across timesteps when the modulated
 input doesn't move much. The trade-off is governed by ``rel_l1_thresh``:
 higher = more skipping = faster but lossier.
 
-Architecture-agnostic mechanism, model-specific polyfit coefficients (see
-``TEACACHE_PRESETS``).
+Architecture-agnostic mechanism — coefficients are model-specific and live
+with each model's port (e.g. inside the LTX-2 / Hunyuan / Flux MLX
+implementation). ``mlx-arsenal`` ships only the engine.
 
 References:
     https://github.com/ali-vilab/TeaCache
@@ -57,21 +58,6 @@ class TeaCacheController:
         self._accumulated: float = 0.0
         self._prev_residual = None
 
-    @classmethod
-    def from_preset(
-        cls,
-        name: str,
-        num_steps: int,
-        rel_l1_thresh: float | None = None,
-    ) -> TeaCacheController:
-        """Construct a controller from a named entry in ``TEACACHE_PRESETS``."""
-        preset = TEACACHE_PRESETS[name]
-        return cls(
-            num_steps=num_steps,
-            rel_l1_thresh=preset["rel_l1_thresh"] if rel_l1_thresh is None else rel_l1_thresh,
-            coefficients=preset["coefficients"],
-        )
-
     def reset(self) -> None:
         """Clear all state. Call at the start of each new generation."""
         self._prev_modulated_input = None
@@ -120,30 +106,3 @@ class TeaCacheController:
                 "before reading previous_residual."
             )
         return self._prev_residual
-
-
-# Coefficients sourced from the upstream TeaCache repository
-# (https://github.com/ali-vilab/TeaCache). The default ``rel_l1_thresh`` for
-# each preset reflects the upstream "balanced" recipe; tune per use case.
-TEACACHE_PRESETS: dict[str, dict] = {
-    "hunyuan_video": {
-        "coefficients": [
-            7.33226126e02,
-            -4.01131952e02,
-            6.75869174e01,
-            -3.14987800e00,
-            9.61237896e-02,
-        ],
-        "rel_l1_thresh": 0.15,
-    },
-    "flux": {
-        "coefficients": [
-            4.98651651e02,
-            -2.83781631e02,
-            5.58554382e01,
-            -3.82021401e00,
-            2.64230861e-01,
-        ],
-        "rel_l1_thresh": 0.4,
-    },
-}
