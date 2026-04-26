@@ -55,7 +55,7 @@ class TeaCacheController:
         self._rescale = np.poly1d(self.coefficients)
         self._prev_modulated_input: mx.array | None = None
         self._accumulated: float = 0.0
-        self._prev_residual: mx.array | None = None
+        self._prev_residual = None
 
     @classmethod
     def from_preset(
@@ -101,13 +101,19 @@ class TeaCacheController:
         self._accumulated = 0.0
         return True
 
-    def cache_residual(self, residual: mx.array) -> None:
-        """Store ``output - input`` from the just-computed forward."""
+    def cache_residual(self, residual) -> None:
+        """Store the residual from the just-computed step for reuse on skip.
+
+        ``residual`` is whatever the caller wants to retrieve later via
+        ``previous_residual``. Single-tensor models pass an ``mx.array``;
+        multi-stream models (e.g. LTX-2) pass a tuple or dict. The controller
+        does not inspect or copy the value.
+        """
         self._prev_residual = residual
 
     @property
-    def previous_residual(self) -> mx.array:
-        """Last cached residual. Raises before the first ``cache_residual`` call."""
+    def previous_residual(self):
+        """Last cached payload. Raises before the first ``cache_residual`` call."""
         if self._prev_residual is None:
             raise RuntimeError(
                 "No residual cached yet — call cache_residual() after a computed step "

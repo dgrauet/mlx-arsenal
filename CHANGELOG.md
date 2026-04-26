@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coefficients and default thresholds. Ships with `hunyuan_video` and `flux`;
   per-architecture calibration recommended for production.
 
+### Changed
+- `TeaCacheController.cache_residual` / `previous_residual` now accept any
+  payload (previously typed as `mx.array`). Enables multi-stream / multi-pass
+  models (e.g. LTX-2) to cache a tuple or dict of residuals.
+
 ## [0.2.2] — 2026-04-18
 
 ### Fixed

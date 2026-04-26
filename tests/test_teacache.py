@@ -148,3 +148,18 @@ class TestEndToEndCacheReuse:
         assert c.should_compute(1, x_in_2) is False
         recovered = x_in_2 + c.previous_residual
         assert mx.allclose(recovered, mx.full((4,), 1.501), atol=1e-6).item()
+
+
+class TestArbitraryPayloadCache:
+    def test_cache_residual_accepts_dict_of_tuples(self):
+        """LTX-2 caches a per-pass dict; controller must accept arbitrary payloads."""
+        c = make_controller()
+        payload = {
+            "cond": (mx.array([1.0]), mx.array([2.0])),
+            "uncond": (mx.array([3.0]), mx.array([4.0])),
+        }
+        c.cache_residual(payload)
+        retrieved = c.previous_residual
+        assert retrieved is payload  # exact identity, not a copy
+        assert mx.allclose(retrieved["cond"][0], mx.array([1.0])).item()
+        assert mx.allclose(retrieved["uncond"][1], mx.array([4.0])).item()
