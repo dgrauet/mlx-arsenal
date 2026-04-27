@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-04-27
+
+> Note: 0.2.3 was bumped in pyproject for an unreleased pixel_shuffle fix
+> branch but never published to PyPI; this release skips that number to
+> avoid ambiguity with the dangling v0.2.3 tag in git.
+
 ### Added
 - `diffusion.TeaCacheController` — timestep-aware residual caching for
   diffusion transformers (Liu et al., *Timestep Embedding Aware Cache*).
@@ -62,7 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tiling` — `tiled_process`, `temporal_slice_process` for memory-efficient
   large-tensor processing.
 
-[Unreleased]: https://github.com/dgrauet/mlx-arsenal/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/dgrauet/mlx-arsenal/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/dgrauet/mlx-arsenal/releases/tag/v0.2.4
 [0.2.2]: https://github.com/dgrauet/mlx-arsenal/releases/tag/v0.2.2
 [0.2.1]: https://github.com/dgrauet/mlx-arsenal/releases/tag/v0.2.1
 [0.2.0]: https://github.com/dgrauet/mlx-arsenal/releases/tag/v0.2.0
