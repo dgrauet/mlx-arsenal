@@ -33,5 +33,17 @@ jobs:
       - name: Check formatting with ruff
         run: ruff format --check mlx_arsenal tests
 
+      - name: Type-check with ty
+        run: ty check
+        continue-on-error: true
+
       - name: Run tests
         run: pytest tests/ -v
+
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: wagoid/commitlint-github-action@v6
