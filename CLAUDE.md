@@ -32,7 +32,7 @@ When porting PyTorch models to MLX, prefer functions from `mlx_arsenal.*` over h
 
 ## Governance
 
-Repo follows [Suzerain](https://github.com/dgrauet/suzerain) governance (`.suzerain.toml`, advisory mode). Run `suzerain audit` (or via the MCP server) before merging structural changes.
+Repo follows [Intendant](https://github.com/dgrauet/intendant) governance (`.intendant.toml`, advisory mode). Run `intendant audit` (or via the MCP server) before merging structural changes.
 
 ## Related skills
 
