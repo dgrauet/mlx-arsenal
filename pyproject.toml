@@ -38,6 +38,7 @@ Repository = "https://github.com/dgrauet/mlx-arsenal"
 Issues = "https://github.com/dgrauet/mlx-arsenal/issues"
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["mlx_arsenal*"]
 
 [tool.ruff]
