@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import mlx.core as mx
 import mlx.nn as nn
 
@@ -63,7 +65,7 @@ class MoELayer(nn.Module):
         hidden_size: int,
         num_experts: int,
         top_k: int,
-        expert_fn: callable,
+        expert_fn: Callable[[], nn.Module],
         shared_expert: nn.Module | None = None,
     ):
         super().__init__()

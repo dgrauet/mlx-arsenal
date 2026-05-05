@@ -8,8 +8,8 @@ import mlx.core as mx
 
 def interpolate_nearest(
     x: mx.array,
-    size: tuple = None,
-    scale_factor: float = None,
+    size: int | tuple[int, ...] | None = None,
+    scale_factor: float | None = None,
 ) -> mx.array:
     """Nearest-neighbor interpolation for N-dimensional spatial tensors.
 
@@ -83,7 +83,7 @@ def interpolate_3d(
 def avg_pool1d(
     x: mx.array,
     kernel_size: int,
-    stride: int = None,
+    stride: int | None = None,
 ) -> mx.array:
     """1D average pooling.
 

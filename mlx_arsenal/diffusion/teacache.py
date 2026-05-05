@@ -75,10 +75,9 @@ class TeaCacheController:
             self._prev_modulated_input = modulated_input
             return True
 
-        delta = (
-            mx.mean(mx.abs(modulated_input - self._prev_modulated_input))
-            / mx.mean(mx.abs(self._prev_modulated_input))
-        ).item()
+        prev = self._prev_modulated_input
+        assert prev is not None, "should_compute called before step 0"
+        delta = (mx.mean(mx.abs(modulated_input - prev)) / mx.mean(mx.abs(prev))).item()
         self._accumulated += float(self._rescale(delta))
         self._prev_modulated_input = modulated_input
 

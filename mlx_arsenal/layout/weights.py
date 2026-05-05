@@ -60,6 +60,7 @@ def load_safetensors(
         Dict of parameter name -> mx.array.
     """
     weights = mx.load(str(path))
+    assert isinstance(weights, dict), f"expected dict from safetensors, got {type(weights)}"
 
     if key_map or key_fn:
         remapped = {}
