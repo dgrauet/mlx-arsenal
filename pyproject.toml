@@ -54,7 +54,7 @@ ignore = ["N806"]
 testpaths = ["tests"]
 
 [tool.ty]
-# Strict-mode opt-in for PYTHON_QU003 (suzerain). See ADR-0003 for rationale.
+# Strict-mode opt-in for PYTHON_QU003 (intendant). See ADR-0003 for rationale.
 
 [tool.coverage.run]
 source = ["mlx_arsenal"]
