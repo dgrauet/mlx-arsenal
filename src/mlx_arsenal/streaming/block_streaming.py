@@ -43,15 +43,12 @@ LoraFuser = Callable[
     [list[tuple[str, mx.array]], int, list["BlockLoraSource"]],
     list[tuple[str, mx.array]],
 ]
-"""Callable that fuses LoRA deltas into a block's weight list.
+"""Callable signature for fusing LoRA deltas into a block's weight list.
 
-Args:
-    weights: ``[(param_name, array), ...]`` for the bound block.
-    block_idx: Index of the block being bound.
-    lora_sources: Sources to fuse (already filtered by ``has_block``).
-
-Returns:
-    The fused weight list (same shape; arrays may be replaced).
+Implementations receive the bound weights as ``[(param_name, array), ...]``,
+the block index being bound, and the list of :class:`BlockLoraSource` to
+fuse (already filtered by :meth:`BlockLoraSource.has_block`). They return
+the fused weight list (same shape; arrays may be replaced).
 """
 
 
