@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-14
+
+### Added
+- `mlx_arsenal.streaming` — block streaming for low-RAM transformer
+  inference on Apple Silicon. Stream block weights from memory-mapped
+  safetensors into a single shared `nn.Module`, so peak resident memory
+  stays at `~1 block` instead of `~num_blocks`. Exposes `BlockStreamer`
+  (mmap + bind), `BlockLoraSource` (per-block LoRA A/B indexing with
+  optional `key_mapper` for upstream-naming remaps), and an injected
+  `lora_fuser` callable hook so quantization-aware fusion strategies
+  stay out of arsenal. Extracted from the `ltx-2-mlx` port; generic
+  enough for any model whose state-dict has `f"{prefix}{i}.{rest}"`
+  block keys.
+
 ## [0.2.5] — 2026-05-14
 
 ### Changed
