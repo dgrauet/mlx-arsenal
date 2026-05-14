@@ -10,7 +10,7 @@ When porting PyTorch models to MLX, prefer functions from `mlx_arsenal.*` over h
 
 ## Layout
 
-- `mlx_arsenal/` — flat package layout (no `src/`). Submodules: `spatial`, `layout`, `conv`, `attention`, `norm`, `encoding`, `diffusion`, `moe`, `rasterize`, `tiling`.
+- `src/mlx_arsenal/` — `src/` package layout (migrated from flat layout in a106fa0). Submodules: `spatial`, `layout`, `conv`, `attention`, `norm`, `encoding`, `diffusion`, `moe`, `rasterize`, `tiling`.
 - `tests/` — pytest tests, one file per submodule (`test_<module>.py`).
 - `docs/` — design notes and ADRs.
 
@@ -25,7 +25,7 @@ When porting PyTorch models to MLX, prefer functions from `mlx_arsenal.*` over h
 ## Workflow
 
 - Install dev: `pip install -e ".[dev]"` (or `uv sync --extra dev`).
-- Lint: `ruff check mlx_arsenal tests` + `ruff format --check ...`
+- Lint: `ruff check src/mlx_arsenal tests` + `ruff format --check ...`
 - Type-check: `ty check`
 - Tests: `pytest tests/ -v`
 - Pre-commit hooks are wired up — install with `pre-commit install`.
