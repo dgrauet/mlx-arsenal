@@ -39,6 +39,7 @@ pip install git+https://github.com/dgrauet/mlx-arsenal.git
 | `mlx_arsenal.modulation` | `AdaLNModulation`, `ScaleShiftTable`, `modulate`, `gated_residual` | DiT AdaLN modulation primitives (1 / 2 / 6 / 9-param variants) |
 | `mlx_arsenal.ffn` | `FeedForward`, `GatedFFN`, `GeGLU`, `SwiGLU` | Transformer FFN / MLP blocks (vanilla + gated variants) |
 | `mlx_arsenal.loader` | `SDOps`, `SafetensorsStateDictLoader`, `StateDict`, `read_safetensors_metadata` | State-dict key remapping chain + safetensors loader |
+| `mlx_arsenal.rope` | `rope_frequencies_1d`, `rope_frequencies_nd`, `apply_rotary_emb`, `rotate_half`, `meshgrid_nd` | Rotary Position Embeddings (N-D, interleaved + half-rotated variants) |
 
 ## Quick start
 

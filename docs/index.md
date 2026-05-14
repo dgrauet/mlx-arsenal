@@ -35,6 +35,7 @@ place so each port doesn't ship a sixth copy.
 | [`modulation`](api/modulation.md) | `AdaLNModulation`, `ScaleShiftTable`, `modulate`, `gated_residual` | DiT AdaLN modulation primitives |
 | [`ffn`](api/ffn.md) | `FeedForward`, `GatedFFN`, `GeGLU`, `SwiGLU` | Transformer FFN / MLP blocks |
 | [`loader`](api/loader.md) | `SDOps`, `SafetensorsStateDictLoader`, `StateDict`, `read_safetensors_metadata` | State-dict key remapping + safetensors loader |
+| [`rope`](api/rope.md) | `rope_frequencies_1d`, `rope_frequencies_nd`, `apply_rotary_emb`, `rotate_half`, `meshgrid_nd` | Rotary Position Embeddings (N-D, both pair conventions) |
 
 ## Quick start
 

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-14
+
+### Added
+- `mlx_arsenal.rope` — Rotary Position Embedding primitives.
+  `rope_frequencies_1d` / `rope_frequencies_nd` compute the
+  `(cos, sin)` half-angle pairs for one or many axes (CogVideoX-style
+  `[t, h, w]` allocation works directly). `apply_rotary_emb` rotates
+  a tensor with support for both *interleaved* (RoPE-paper / Matrix-Game)
+  and *half-rotated* (HuggingFace / Llama) pair conventions.
+  `meshgrid_nd` builds the integer position grids. NTK rescaling and
+  position-interpolation factors are first-class. Fills the gap that
+  `mx.fast.rope` (1-D interleaved only) leaves open for video and
+  image diffusion ports. Model-specific variants (ERNIE-Image
+  Megatron, LTX SPLIT log-spaced) stay in their ports — arsenal
+  covers the standard case.
+
 ## [0.7.0] — 2026-05-14
 
 ### Added
