@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-05-14
+
+### Changed
+- Migrated package to `src/` layout (PYTHON_LO001).
+- Adopted Intendant governance (renamed from Suzerain); `.intendant.toml`
+  in advisory mode.
+- Hardened CI: `ty` strict type-check, coverage config, `commitlint` for
+  Conventional Commits.
+
+### Fixed
+- Resolved all `ty` diagnostics across source and tests (annotations,
+  `not-None` asserts, narrow casts).
+
 ## [0.2.4] — 2026-04-27
 
 > Note: 0.2.3 was bumped in pyproject for an unreleased pixel_shuffle fix
