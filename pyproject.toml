@@ -31,10 +31,15 @@ dev = [
     "pre-commit>=3.5",
     "ty>=0.0.0a1",
 ]
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.27",
+]
 
 [project.urls]
 Homepage = "https://github.com/dgrauet/mlx-arsenal"
 Repository = "https://github.com/dgrauet/mlx-arsenal"
+Documentation = "https://dgrauet.github.io/mlx-arsenal"
 Issues = "https://github.com/dgrauet/mlx-arsenal/issues"
 
 [tool.setuptools.packages.find]

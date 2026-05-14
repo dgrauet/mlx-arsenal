@@ -11,7 +11,9 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^site/
       - id: end-of-file-fixer
+        exclude: ^site/
       - id: check-yaml
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.0

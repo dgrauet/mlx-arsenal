@@ -1,0 +1,83 @@
+site_name: mlx-arsenal
+site_description: Mid-level MLX building blocks — the missing layer between mlx.nn and full models.
+site_url: https://dgrauet.github.io/mlx-arsenal
+repo_url: https://github.com/dgrauet/mlx-arsenal
+repo_name: dgrauet/mlx-arsenal
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          options:
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            docstring_style: google
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            merge_init_into_class: true
+            filters:
+              - "!^_"
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Install: install.md
+  - API:
+      - Spatial: api/spatial.md
+      - Layout: api/layout.md
+      - Conv: api/conv.md
+      - Attention: api/attention.md
+      - Norm: api/norm.md
+      - Encoding: api/encoding.md
+      - Diffusion: api/diffusion.md
+      - MoE: api/moe.md
+      - Rasterize: api/rasterize.md
+      - Tiling: api/tiling.md
+      - Streaming: api/streaming.md
+  - Design notes:
+      - Overview: adr/index.md
+      - "ADR-0000: Adopt Intendant": adr/0000-adopt-intendant.md
