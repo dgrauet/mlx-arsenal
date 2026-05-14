@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-14
+
+### Added
+- `mlx_arsenal.diffusion.DDIMScheduler` — deterministic DDIM scheduler
+  (`eta=0`) matching the diffusers `DDIMScheduler` /
+  `CogVideoXDDIMScheduler` behaviour. Supports both `epsilon` and
+  `v_prediction` model outputs, `leading` / `trailing` timestep
+  spacing, optional zero-terminal-SNR rescaling, `scaled_linear` /
+  `linear` beta schedules. Extracted from the `VideoX-Fun-mlx` port;
+  complements the existing `FlowMatchEulerDiscreteScheduler` for
+  DDPM-trained models (CogVideoX, Stable Diffusion 1.x / 2.x).
+
 ## [0.6.0] — 2026-05-14
 
 ### Added
