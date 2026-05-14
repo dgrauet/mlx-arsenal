@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-05-14
+
+### Added
+- `mlx_arsenal.ffn` — feed-forward / MLP blocks for transformer ports.
+  Exposes `FeedForward` (vanilla 2-Linear with configurable activation:
+  gelu / gelu_approx / silu / relu), `GatedFFN` (3-Linear gated;
+  selectable gate activation), and the `GeGLU` / `SwiGLU` convenience
+  wrappers. Weight keys follow the public conventions:
+  `proj_in/proj_out` for `FeedForward` (LTX-style),
+  `gate_proj/up_proj/down_proj` for `GatedFFN` (LLaMA / HF style).
+
 ## [0.4.0] — 2026-05-14
 
 ### Added

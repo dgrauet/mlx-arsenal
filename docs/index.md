@@ -33,6 +33,7 @@ place so each port doesn't ship a sixth copy.
 | [`tiling`](api/tiling.md) | `tiled_process`, `temporal_slice_process` | Memory-efficient large tensor processing |
 | [`streaming`](api/streaming.md) | `BlockStreamer`, `BlockLoraSource`, `LoraFuser` | Low-RAM transformer block streaming |
 | [`modulation`](api/modulation.md) | `AdaLNModulation`, `ScaleShiftTable`, `modulate`, `gated_residual` | DiT AdaLN modulation primitives |
+| [`ffn`](api/ffn.md) | `FeedForward`, `GatedFFN`, `GeGLU`, `SwiGLU` | Transformer FFN / MLP blocks |
 
 ## Quick start
 
