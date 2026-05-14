@@ -80,6 +80,7 @@ nav:
       - Streaming: api/streaming.md
       - Modulation: api/modulation.md
       - FFN: api/ffn.md
+      - Loader: api/loader.md
   - Design notes:
       - Overview: adr/index.md
       - "ADR-0000: Adopt Intendant": adr/0000-adopt-intendant.md

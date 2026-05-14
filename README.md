@@ -38,6 +38,7 @@ pip install git+https://github.com/dgrauet/mlx-arsenal.git
 | `mlx_arsenal.streaming` | `BlockStreamer`, `BlockLoraSource`, `LoraFuser` | Low-RAM transformer block streaming from mmap'd safetensors |
 | `mlx_arsenal.modulation` | `AdaLNModulation`, `ScaleShiftTable`, `modulate`, `gated_residual` | DiT AdaLN modulation primitives (1 / 2 / 6 / 9-param variants) |
 | `mlx_arsenal.ffn` | `FeedForward`, `GatedFFN`, `GeGLU`, `SwiGLU` | Transformer FFN / MLP blocks (vanilla + gated variants) |
+| `mlx_arsenal.loader` | `SDOps`, `SafetensorsStateDictLoader`, `StateDict`, `read_safetensors_metadata` | State-dict key remapping chain + safetensors loader |
 
 ## Quick start
 

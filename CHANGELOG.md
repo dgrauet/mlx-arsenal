@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-05-14
+
+### Added
+- `mlx_arsenal.loader` — state-dict loading primitives extracted from
+  `ltx-2-mlx`. `SDOps` is an immutable chain of rename / match / k-v
+  transform operations (`.with_replacement`, `.with_matching`,
+  `.with_additional_allowed_keys`, `.with_kv_operation`) that lets
+  ports rewrite upstream weight-key naming (diffusers / ComfyUI /
+  Megatron / ...) at load time. `SafetensorsStateDictLoader` consumes
+  an `SDOps` chain, merges multi-file shards, and returns a
+  `StateDict` container with size + dtype accounting. Also exposes
+  `read_safetensors_metadata(path)` — a pure-stdlib reader for the
+  optional `__metadata__` block (no `safetensors` dep added).
+
 ## [0.5.0] — 2026-05-14
 
 ### Added

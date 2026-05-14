@@ -34,6 +34,7 @@ place so each port doesn't ship a sixth copy.
 | [`streaming`](api/streaming.md) | `BlockStreamer`, `BlockLoraSource`, `LoraFuser` | Low-RAM transformer block streaming |
 | [`modulation`](api/modulation.md) | `AdaLNModulation`, `ScaleShiftTable`, `modulate`, `gated_residual` | DiT AdaLN modulation primitives |
 | [`ffn`](api/ffn.md) | `FeedForward`, `GatedFFN`, `GeGLU`, `SwiGLU` | Transformer FFN / MLP blocks |
+| [`loader`](api/loader.md) | `SDOps`, `SafetensorsStateDictLoader`, `StateDict`, `read_safetensors_metadata` | State-dict key remapping + safetensors loader |
 
 ## Quick start
 
