@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-05-14
+
+### Added
+- `mlx_arsenal.modulation` — AdaLN modulation primitives for DiT-style
+  models. Exposes `AdaLNModulation` (`SiLU → Linear → N chunks`,
+  configurable chunk count for 1 / 2 / 4 / 6 / 9-param variants),
+  `ScaleShiftTable` (final-layer learnable scale/shift table), and the
+  `modulate()` / `gated_residual()` functional helpers. Extracted from
+  patterns shared by `ltx-2-mlx` (9-param self-attn, 2-param cross-attn,
+  4-param AV) and `ernie-image-mlx` (6-param shared AdaLN).
+
 ## [0.3.0] — 2026-05-14
 
 ### Added

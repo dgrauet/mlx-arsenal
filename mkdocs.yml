@@ -78,6 +78,7 @@ nav:
       - Rasterize: api/rasterize.md
       - Tiling: api/tiling.md
       - Streaming: api/streaming.md
+      - Modulation: api/modulation.md
   - Design notes:
       - Overview: adr/index.md
       - "ADR-0000: Adopt Intendant": adr/0000-adopt-intendant.md
