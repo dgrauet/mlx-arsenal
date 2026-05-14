@@ -27,7 +27,7 @@ place so each port doesn't ship a sixth copy.
 | [`attention`](api/attention.md) | `causal_mask`, `sliding_window_mask` | Attention mask creation |
 | [`norm`](api/norm.md) | `PixelNorm`, `ScaleNorm` | Custom normalization layers |
 | [`encoding`](api/encoding.md) | `FourierEmbedder` | Sinusoidal positional encoding |
-| [`diffusion`](api/diffusion.md) | `get_timestep_embedding`, `TimestepEmbedding`, schedulers, `euler_step`, `classifier_free_guidance`, `TeaCacheController` | Flow-matching diffusion primitives |
+| [`diffusion`](api/diffusion.md) | `get_timestep_embedding`, `TimestepEmbedding`, `FlowMatchEulerDiscreteScheduler`, `DDIMScheduler`, `euler_step`, `classifier_free_guidance`, `TeaCacheController` | Flow-matching + DDIM diffusion primitives |
 | [`moe`](api/moe.md) | `MoEGate`, `MoELayer` | Top-k mixture-of-experts dispatch |
 | [`rasterize`](api/rasterize.md) | `rasterize_triangles`, `interpolate` | Differentiable triangle rasterization |
 | [`tiling`](api/tiling.md) | `tiled_process`, `temporal_slice_process` | Memory-efficient large tensor processing |

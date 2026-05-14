@@ -1,11 +1,13 @@
 """Tests for diffusion primitives."""
 
 import math
+from typing import cast
 
 import mlx.core as mx
 import pytest
 
 from mlx_arsenal.diffusion import (
+    DDIMScheduler,
     FlowMatchEulerDiscreteScheduler,
     TimestepEmbedding,
     classifier_free_guidance,
@@ -224,3 +226,119 @@ def test_no_extraneous_nan_from_shift_endpoints():
         sigmas = get_sampling_sigmas(num_steps=8, shift=shift)
         for s in sigmas:
             assert not math.isnan(s) and math.isfinite(s)
+
+
+class TestDDIMScheduler:
+    def test_default_init_succeeds(self):
+        sched = DDIMScheduler()
+        assert sched.alphas_cumprod.shape == (1000,)
+        assert sched.timesteps.shape == (50,)
+
+    def test_set_timesteps_changes_schedule_length(self):
+        sched = DDIMScheduler(num_inference_steps=10)
+        assert sched.timesteps.shape == (10,)
+        sched.set_timesteps(25)
+        assert sched.timesteps.shape == (25,)
+
+    def test_trailing_timesteps_are_descending(self):
+        sched = DDIMScheduler(num_inference_steps=8, timestep_spacing="trailing")
+        ts = cast(list[int], sched.timesteps.tolist())
+        assert ts == sorted(ts, reverse=True)
+        assert max(ts) < sched.num_train_timesteps
+        assert min(ts) >= 0
+
+    def test_leading_timesteps_are_descending(self):
+        sched = DDIMScheduler(num_inference_steps=8, timestep_spacing="leading")
+        ts = cast(list[int], sched.timesteps.tolist())
+        assert ts == sorted(ts, reverse=True)
+
+    def test_unsupported_beta_schedule_raises(self):
+        with pytest.raises(ValueError, match="beta_schedule"):
+            DDIMScheduler(beta_schedule="banana")  # ty: ignore[invalid-argument-type]
+
+    def test_zero_snr_makes_terminal_alpha_zero(self):
+        sched = DDIMScheduler(rescale_betas_zero_snr=True)
+        # After rescale the final alpha_cumprod should be ~0.
+        assert float(sched.alphas_cumprod[-1].item()) < 1e-5
+
+    def test_no_zero_snr_keeps_alphas_positive(self):
+        sched = DDIMScheduler(rescale_betas_zero_snr=False)
+        assert float(sched.alphas_cumprod[-1].item()) > 0.0
+
+    def test_set_alpha_to_one(self):
+        sched = DDIMScheduler(set_alpha_to_one=True)
+        assert float(sched.final_alpha_cumprod.item()) == pytest.approx(1.0)
+
+    def test_step_shape_preserved(self):
+        sched = DDIMScheduler(num_inference_steps=4)
+        sample = mx.random.normal((2, 4, 8))
+        model_out = mx.random.normal((2, 4, 8))
+        out = sched.step(model_out, sched.timesteps[0], sample)
+        assert out.shape == sample.shape
+
+    def test_step_accepts_int_or_mxarray_timestep(self):
+        sched = DDIMScheduler(num_inference_steps=4)
+        sample = mx.zeros((1, 4))
+        model_out = mx.ones((1, 4))
+        as_int = sched.step(model_out, int(sched.timesteps[0].item()), sample)
+        as_arr = sched.step(model_out, sched.timesteps[0], sample)
+        assert mx.allclose(as_int, as_arr).item()
+
+    def test_epsilon_prediction_matches_formula(self):
+        """At eta=0, epsilon DDIM step is the closed-form interpolation."""
+        sched = DDIMScheduler(
+            prediction_type="epsilon",
+            rescale_betas_zero_snr=False,
+            num_inference_steps=10,
+        )
+        sample = mx.ones((1, 4))
+        eps = mx.zeros((1, 4))  # zero noise prediction → x0 = sample / sqrt(alpha_t)
+        t = sched.timesteps[0]
+        out = sched.step(eps, t, sample)
+
+        t_int = int(t.item())
+        prev_t = sched._prev_timestep(t_int)
+        alpha_t = sched.alphas_cumprod[t_int]
+        alpha_prev = sched.alphas_cumprod[prev_t] if prev_t >= 0 else sched.final_alpha_cumprod
+        # pred_x0 = sample / sqrt(alpha_t); pred_eps = 0 → out = sqrt(alpha_prev) * pred_x0
+        expected = mx.sqrt(alpha_prev) * (sample / mx.sqrt(alpha_t))
+        assert mx.allclose(out, expected).item()
+
+    def test_v_prediction_runs(self):
+        sched = DDIMScheduler(prediction_type="v_prediction", num_inference_steps=4)
+        sample = mx.random.normal((1, 4))
+        v = mx.random.normal((1, 4))
+        out = sched.step(v, sched.timesteps[0], sample)
+        assert out.shape == sample.shape
+
+    def test_clip_sample(self):
+        # Force pred_x0 to be huge; clipping bounds it to [-1, 1].
+        sched = DDIMScheduler(
+            prediction_type="epsilon",
+            clip_sample=True,
+            rescale_betas_zero_snr=False,
+            num_inference_steps=4,
+        )
+        sample = mx.full((1, 4), 100.0)
+        eps = mx.zeros((1, 4))
+        out = sched.step(eps, sched.timesteps[0], sample)
+        # With clipping, magnitude is bounded by sqrt(alpha_prev) * 1
+        assert float(mx.max(mx.abs(out)).item()) <= 1.0
+
+    def test_add_noise_at_zero_returns_sample(self):
+        """At the lowest timestep (alpha≈1), add_noise ≈ original."""
+        sched = DDIMScheduler(rescale_betas_zero_snr=False)
+        original = mx.ones((1, 4))
+        noise = mx.zeros((1, 4))
+        out = sched.add_noise(original, noise, 0)
+        # alpha_cumprod[0] is just (1 - beta[0]) ≈ 1 — close to original.
+        assert mx.allclose(out, original, atol=1e-2).item()
+
+    def test_add_noise_with_zero_original(self):
+        sched = DDIMScheduler(rescale_betas_zero_snr=False)
+        original = mx.zeros((1, 4))
+        noise = mx.ones((1, 4))
+        t = 500
+        out = sched.add_noise(original, noise, t)
+        expected = mx.sqrt(1.0 - sched.alphas_cumprod[t]) * noise
+        assert mx.allclose(out, expected).item()
