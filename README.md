@@ -35,6 +35,7 @@ pip install git+https://github.com/dgrauet/mlx-arsenal.git
 | `mlx_arsenal.moe` | `MoEGate`, `MoELayer` | Top-k mixture-of-experts dispatch |
 | `mlx_arsenal.rasterize` | `rasterize_triangles`, `interpolate` | Differentiable triangle rasterization with Metal z-buffer |
 | `mlx_arsenal.tiling` | `tiled_process`, `temporal_slice_process` | Memory-efficient large tensor processing |
+| `mlx_arsenal.streaming` | `BlockStreamer`, `BlockLoraSource`, `LoraFuser` | Low-RAM transformer block streaming from mmap'd safetensors |
 
 ## Quick start
 
@@ -58,6 +59,38 @@ mlx_weights = convert_conv_weights(pytorch_weights)
 # Causal attention mask for autoregressive decoding
 mask = causal_mask(seq_len=128, offset=kv_cache_len)
 ```
+
+### Block streaming (low-RAM transformers)
+
+Run a 20+ GB transformer on a Mac without holding every block resident
+at once: keep one shared block module, and rebind its weights from
+memory-mapped safetensors before each block's forward.
+
+```python
+from mlx_arsenal.streaming import BlockStreamer
+
+# Build the model with ONE block in transformer_blocks (not num_layers).
+model = build_my_transformer(num_layers=1)
+load_non_block_weights(model, weights_path)
+
+streamer = BlockStreamer(
+    weights_path,
+    block_prefix="transformer.transformer_blocks.",
+)
+assert streamer.block_count == num_layers  # discovered from safetensors
+
+shared_block = model.transformer_blocks[0]
+prev_idx = None
+for i in range(streamer.block_count):
+    streamer.bind(shared_block, idx=i, evict_previous=prev_idx)
+    x = shared_block(x, ...)  # use the rebound block
+    prev_idx = i
+```
+
+For LoRA: pass a `lora_fuser` callable to `BlockStreamer` and one or
+more `BlockLoraSource` instances to `bind(..., lora_sources=...)`.
+Quantization-aware fusion strategies stay in the caller — arsenal
+only handles the discovery + indexing.
 
 ## Requirements
 
