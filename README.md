@@ -37,6 +37,7 @@ pip install git+https://github.com/dgrauet/mlx-arsenal.git
 | `mlx_arsenal.tiling` | `tiled_process`, `temporal_slice_process` | Memory-efficient large tensor processing |
 | `mlx_arsenal.streaming` | `BlockStreamer`, `BlockLoraSource`, `LoraFuser` | Low-RAM transformer block streaming from mmap'd safetensors |
 | `mlx_arsenal.modulation` | `AdaLNModulation`, `ScaleShiftTable`, `modulate`, `gated_residual` | DiT AdaLN modulation primitives (1 / 2 / 6 / 9-param variants) |
+| `mlx_arsenal.ffn` | `FeedForward`, `GatedFFN`, `GeGLU`, `SwiGLU` | Transformer FFN / MLP blocks (vanilla + gated variants) |
 
 ## Quick start
 
