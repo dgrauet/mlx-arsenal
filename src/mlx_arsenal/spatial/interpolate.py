@@ -40,6 +40,7 @@ def interpolate_nearest(
         else:
             target = list(size)
     else:
+        assert scale_factor is not None
         target = [int(x.shape[d] * scale_factor) for d in spatial_dims]
 
     # Apply nearest-neighbor resize per dimension
@@ -55,7 +56,7 @@ def interpolate_nearest(
             src_size - 1,
         )
         # Gather along this dimension
-        slices = [slice(None)] * result.ndim
+        slices: list[slice | mx.array] = [slice(None)] * result.ndim
         slices[dim] = indices
         result = result[tuple(slices)]
 

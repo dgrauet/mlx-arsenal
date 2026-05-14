@@ -70,7 +70,7 @@ class TestSingleTriangle:
         fi, bary = rasterize_triangles(self.vertices, self.faces, self.width, self.height)
         mx.synchronize()
 
-        bg_mask = (fi == 0).astype(mx.float32)  # (H, W)
+        bg_mask = (fi == 0).astype(mx.float32)  # ty: ignore[unresolved-attribute]  # (H, W)
         if bg_mask.sum().item() == 0:
             pytest.skip("Entire image covered")
 

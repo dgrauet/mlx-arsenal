@@ -101,6 +101,7 @@ class TestFlowMatchEulerDiscreteScheduler:
     def test_set_timesteps_shapes(self):
         sched = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
         sched.set_timesteps(num_inference_steps=25)
+        assert sched.sigmas is not None and sched.timesteps is not None
         assert sched.sigmas.shape == (26,)
         assert sched.timesteps.shape == (25,)
 
@@ -125,6 +126,7 @@ class TestFlowMatchEulerDiscreteScheduler:
         sched.set_timesteps(num_inference_steps=4)
         sample = mx.zeros((1, 4))
         velocity = mx.ones((1, 4))
+        assert sched.timesteps is not None
         out = sched.step(velocity, sched.timesteps[0], sample)
         assert sched._step_index == 1
         # sigma_next > sigma for ascending schedule, so update is positive
@@ -134,6 +136,7 @@ class TestFlowMatchEulerDiscreteScheduler:
         sched = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
         sched.set_timesteps(num_inference_steps=3, sigmas=[0.1, 0.5, 0.9])
         # 3 sigmas + terminal 1.0 = 4
+        assert sched.sigmas is not None
         assert sched.sigmas.shape == (4,)
         assert sched.sigmas[-1].item() == pytest.approx(1.0)
 

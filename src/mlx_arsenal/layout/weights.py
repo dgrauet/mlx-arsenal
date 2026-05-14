@@ -1,6 +1,7 @@
 """Weight conversion utilities for loading PyTorch models into MLX."""
 
 from collections.abc import Callable
+from typing import cast
 
 import mlx.core as mx
 
@@ -59,8 +60,9 @@ def load_safetensors(
     Returns:
         Dict of parameter name -> mx.array.
     """
-    weights = mx.load(str(path))
-    assert isinstance(weights, dict), f"expected dict from safetensors, got {type(weights)}"
+    loaded = mx.load(str(path))
+    assert isinstance(loaded, dict), f"expected dict from safetensors, got {type(loaded)}"
+    weights = cast(dict[str, mx.array], loaded)
 
     if key_map or key_fn:
         remapped = {}

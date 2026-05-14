@@ -1,6 +1,7 @@
 """Tests for attention module (masks)."""
 
 import math
+from typing import cast
 
 import mlx.core as mx
 
@@ -13,7 +14,7 @@ class TestCausalMask:
         assert m.shape == (1, 1, 5, 5)
 
     def test_lower_triangular(self):
-        m = causal_mask(seq_len=4)[0, 0].tolist()
+        m = cast(list[list[float]], causal_mask(seq_len=4)[0, 0].tolist())
         for i in range(4):
             for j in range(4):
                 value = m[i][j]
@@ -25,7 +26,7 @@ class TestCausalMask:
     def test_kv_offset(self):
         m = causal_mask(seq_len=2, offset=3)
         assert m.shape == (1, 1, 2, 5)
-        grid = m[0, 0].tolist()
+        grid = cast(list[list[float]], m[0, 0].tolist())
         # Row 0 (absolute pos 3) can see cols 0..3.
         assert grid[0][3] == 0.0
         assert math.isinf(grid[0][4])
@@ -43,7 +44,7 @@ class TestSlidingWindowMask:
         assert m.shape == (1, 1, 6, 6)
 
     def test_window_limits_attention(self):
-        m = sliding_window_mask(seq_len=5, window_size=2)[0, 0].tolist()
+        m = cast(list[list[float]], sliding_window_mask(seq_len=5, window_size=2)[0, 0].tolist())
         # window_size=2 means each position attends to itself + 1 prior.
         for i in range(5):
             for j in range(5):
