@@ -2,6 +2,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/mlx-arsenal.svg)](https://pypi.org/project/mlx-arsenal/)
 [![CI](https://github.com/dgrauet/mlx-arsenal/actions/workflows/ci.yml/badge.svg)](https://github.com/dgrauet/mlx-arsenal/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/dgrauet/mlx-arsenal/branch/main/graph/badge.svg)](https://codecov.io/gh/dgrauet/mlx-arsenal)
 [![Python](https://img.shields.io/pypi/pyversions/mlx-arsenal.svg)](https://pypi.org/project/mlx-arsenal/)
 [![License](https://img.shields.io/pypi/l/mlx-arsenal.svg)](https://github.com/dgrauet/mlx-arsenal/blob/main/LICENSE)
 
