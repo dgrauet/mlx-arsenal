@@ -4,9 +4,9 @@ repos:
     hooks:
       - id: ruff
         args: [--fix]
-        files: ^(mlx_arsenal|tests)/
+        files: ^(src/mlx_arsenal|tests)/
       - id: ruff-format
-        files: ^(mlx_arsenal|tests)/
+        files: ^(src/mlx_arsenal|tests)/
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
