@@ -83,9 +83,10 @@ class SafetensorsStateDictLoader:
         shards = path if isinstance(path, list) else [path]
         for shard in shards:
             loaded = mx.load(str(shard))
-            assert isinstance(loaded, dict), (
-                f"expected dict from safetensors, got {type(loaded)} for {shard!r}"
-            )
+            if not isinstance(loaded, dict):
+                raise TypeError(
+                    f"expected dict from safetensors, got {type(loaded).__name__} for {shard!r}"
+                )
             weights = cast(dict[str, mx.array], loaded)
 
             for raw_key, raw_value in weights.items():
