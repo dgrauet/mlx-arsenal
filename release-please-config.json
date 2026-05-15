@@ -8,7 +8,14 @@
   "packages": {
     ".": {
       "package-name": "mlx-arsenal",
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        }
+      ]
     }
   }
 }
