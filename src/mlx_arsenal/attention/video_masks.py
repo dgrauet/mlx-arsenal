@@ -64,3 +64,27 @@ def spatial_only_mask(T: int, H: int, W: int, *, dtype: mx.Dtype = mx.float32) -
     t_flat, _, _ = _thw_coords(T, H, W)
     valid = mx.equal(mx.expand_dims(t_flat, 0), mx.expand_dims(t_flat, 1))
     return _additive(valid, dtype)
+
+
+def temporal_only_mask(T: int, H: int, W: int, *, dtype: mx.Dtype = mx.float32) -> mx.array:
+    """Mask that restricts attention to tokens at the same spatial position.
+
+    Each token at `(h, w)` attends only to tokens whose `(h, w)` matches,
+    across all frames. Captures the "temporal-locality" head pattern from
+    Sparse VideoGen.
+
+    Args:
+        T: Number of frames.
+        H: Latent height.
+        W: Latent width.
+        dtype: Output dtype.
+
+    Returns:
+        Additive mask of shape `(1, 1, T*H*W, T*H*W)`.
+    """
+    _validate_thw(T, H, W)
+    _, h_flat, w_flat = _thw_coords(T, H, W)
+    same_h = mx.equal(mx.expand_dims(h_flat, 0), mx.expand_dims(h_flat, 1))
+    same_w = mx.equal(mx.expand_dims(w_flat, 0), mx.expand_dims(w_flat, 1))
+    valid = mx.logical_and(same_h, same_w)
+    return _additive(valid, dtype)

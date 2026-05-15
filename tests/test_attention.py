@@ -6,7 +6,12 @@ from typing import cast
 import mlx.core as mx
 import pytest
 
-from mlx_arsenal.attention import causal_mask, sliding_window_mask, spatial_only_mask
+from mlx_arsenal.attention import (
+    causal_mask,
+    sliding_window_mask,
+    spatial_only_mask,
+    temporal_only_mask,
+)
 
 
 class TestCausalMask:
@@ -88,3 +93,30 @@ class TestSpatialOnlyMask:
             spatial_only_mask(T=2, H=-1, W=2)
         with pytest.raises(ValueError):
             spatial_only_mask(T=2, H=2, W=0)
+
+
+class TestTemporalOnlyMask:
+    def test_shape(self):
+        m = temporal_only_mask(T=2, H=3, W=4)
+        assert m.shape == (1, 1, 24, 24)
+
+    def test_pattern(self):
+        # T=2, H=2, W=2. Token index i = t*4 + h*2 + w. Same (h,w) ⇔ i%4 == j%4.
+        m = cast(list[list[float]], temporal_only_mask(T=2, H=2, W=2)[0, 0].tolist())
+        for i in range(8):
+            for j in range(8):
+                same_pos = (i % 4) == (j % 4)
+                if same_pos:
+                    assert m[i][j] == 0.0
+                else:
+                    assert math.isinf(m[i][j]) and m[i][j] < 0
+
+    def test_dtype(self):
+        m = temporal_only_mask(T=2, H=2, W=2, dtype=mx.float16)
+        assert m.dtype == mx.float16
+
+    def test_validation(self):
+        with pytest.raises(ValueError):
+            temporal_only_mask(T=0, H=2, W=2)
+        with pytest.raises(ValueError):
+            temporal_only_mask(T=2, H=2, W=-1)
