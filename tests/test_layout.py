@@ -1,6 +1,7 @@
 """Tests for layout module."""
 
 import mlx.core as mx
+import pytest
 
 from mlx_arsenal.layout import (
     channels_last,
@@ -100,3 +101,10 @@ class TestLoadSafetensors:
         path = self._write(tmp_path, src)
         out = load_safetensors(str(path), conv_keys={"conv.weight"})
         assert out["conv.weight"].shape == (8, 3, 3, 4)
+
+    def test_non_dict_load_raises_typeerror(self, tmp_path):
+        """A `.npy` file makes mx.load return an array, not a dict — must raise."""
+        path = str(tmp_path / "rogue.npy")
+        mx.save(path, mx.ones((2, 2)))
+        with pytest.raises(TypeError, match="expected dict from safetensors"):
+            load_safetensors(path)

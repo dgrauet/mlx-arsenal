@@ -188,3 +188,19 @@ class TestBlockStreamerClose:
         streamer = BlockStreamer(path, block_prefix="b.")
         streamer.close()
         assert streamer.block_count == 0
+
+
+class TestNonDictLoadRaises:
+    """`.npy` paths make mx.load return an array, not a dict — both entrypoints must raise."""
+
+    def test_block_streamer_raises_typeerror(self, tmp_path):
+        path = str(tmp_path / "rogue.npy")
+        mx.save(path, mx.ones((2, 2)))
+        with pytest.raises(TypeError, match="expected dict from safetensors"):
+            BlockStreamer(path, block_prefix="b.")
+
+    def test_block_lora_source_raises_typeerror(self, tmp_path):
+        path = str(tmp_path / "rogue.npy")
+        mx.save(path, mx.ones((2, 2)))
+        with pytest.raises(TypeError, match="expected dict from safetensors"):
+            BlockLoraSource(path, block_prefix="b.")
