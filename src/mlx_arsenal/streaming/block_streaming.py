@@ -82,7 +82,8 @@ class BlockLoraSource:
         self.block_prefix = block_prefix
         self._lora_path = str(lora_path)
         loaded = mx.load(self._lora_path)
-        assert isinstance(loaded, dict), f"expected dict from safetensors, got {type(loaded)}"
+        if not isinstance(loaded, dict):
+            raise TypeError(f"expected dict from safetensors, got {type(loaded).__name__}")
         self._lora_data: dict[str, mx.array] = cast(dict[str, mx.array], loaded)
 
         # block_idx -> param_name -> {"a": full_key, "b": full_key}
@@ -260,7 +261,8 @@ class BlockStreamer:
         merged: dict[str, mx.array] = {}
         for path in self._weight_paths:
             loaded = mx.load(path)
-            assert isinstance(loaded, dict), f"expected dict from safetensors, got {type(loaded)}"
+            if not isinstance(loaded, dict):
+                raise TypeError(f"expected dict from safetensors, got {type(loaded).__name__}")
             merged.update(cast(dict[str, mx.array], loaded))
         return merged
 

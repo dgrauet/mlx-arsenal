@@ -61,7 +61,8 @@ def load_safetensors(
         Dict of parameter name -> mx.array.
     """
     loaded = mx.load(str(path))
-    assert isinstance(loaded, dict), f"expected dict from safetensors, got {type(loaded)}"
+    if not isinstance(loaded, dict):
+        raise TypeError(f"expected dict from safetensors, got {type(loaded).__name__}")
     weights = cast(dict[str, mx.array], loaded)
 
     if key_map or key_fn:
