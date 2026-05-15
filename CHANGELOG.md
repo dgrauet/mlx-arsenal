@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-15
+
+[Compare v0.8.0...v0.9.0](https://github.com/dgrauet/mlx-arsenal/compare/v0.8.0...v0.9.0)
+
 ### Added — sparse-attention roadmap for video DiTs (étapes 1–6)
 
 - `mlx_arsenal.attention` video-DiT spatiotemporal masks
