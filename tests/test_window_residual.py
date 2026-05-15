@@ -94,3 +94,44 @@ class TestScheduled:
             WindowResidualController.scheduled(num_steps=10, refresh_steps=[-1])
         with pytest.raises(ValueError):
             WindowResidualController.scheduled(num_steps=1, refresh_steps=[0])
+
+
+class TestAdaptive:
+    def test_refresh_when_input_changes(self):
+        ctrl = WindowResidualController.adaptive(num_steps=5, rel_l1_thresh=0.05)
+        x0 = mx.ones((1, 2, 4, 4))
+        x1 = mx.ones((1, 2, 4, 4)) * 2.0  # 100% change → above thresh
+        # Step 0 is boundary: True regardless, but it also seeds.
+        assert ctrl.should_refresh(0, x0) is True
+        assert ctrl.should_refresh(1, x1) is True  # delta = 1.0 >= 0.05
+
+    def test_skip_when_input_static(self):
+        ctrl = WindowResidualController.adaptive(num_steps=5, rel_l1_thresh=0.05)
+        x = mx.ones((1, 2, 4, 4))
+        assert ctrl.should_refresh(0, x) is True  # boundary
+        assert ctrl.should_refresh(1, x) is False  # delta = 0
+        assert ctrl.should_refresh(2, x) is False
+        assert ctrl.should_refresh(3, x) is False
+        assert ctrl.should_refresh(4, x) is True  # boundary
+
+    def test_boundary_always_refresh(self):
+        ctrl = WindowResidualController.adaptive(num_steps=4, rel_l1_thresh=0.1)
+        x = mx.ones((1, 2, 4, 4))
+        assert ctrl.should_refresh(0, x) is True
+        assert ctrl.should_refresh(3, x) is True
+
+    def test_raises_when_attn_input_missing(self):
+        ctrl = WindowResidualController.adaptive(num_steps=5, rel_l1_thresh=0.1)
+        # Step 0 is boundary so attn_input is still required for seeding,
+        # but the boundary path bypasses the input check. Hit a mid step.
+        ctrl.should_refresh(0, mx.ones((1, 2, 4, 4)))  # seed
+        with pytest.raises(RuntimeError):
+            ctrl.should_refresh(1)  # no attn_input
+
+    def test_validation(self):
+        with pytest.raises(ValueError):
+            WindowResidualController.adaptive(num_steps=5, rel_l1_thresh=0.0)
+        with pytest.raises(ValueError):
+            WindowResidualController.adaptive(num_steps=5, rel_l1_thresh=-0.1)
+        with pytest.raises(ValueError):
+            WindowResidualController.adaptive(num_steps=1, rel_l1_thresh=0.1)

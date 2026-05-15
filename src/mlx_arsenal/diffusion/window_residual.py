@@ -68,6 +68,22 @@ class WindowResidualController:
         obj._refresh_set = frozenset(refresh_steps)
         return obj
 
+    @classmethod
+    def adaptive(cls, num_steps: int, *, rel_l1_thresh: float) -> WindowResidualController:
+        """Refresh when relative-L1 input delta crosses ``rel_l1_thresh``.
+
+        Mirrors :class:`TeaCacheController` semantics: at non-boundary
+        step ``i`` with previous input ``p``, refresh iff
+        ``mean(|input - p|) / mean(|p|) >= rel_l1_thresh``. A zero-norm
+        previous input also forces a refresh.
+        """
+        if rel_l1_thresh <= 0:
+            raise ValueError(f"rel_l1_thresh must be > 0, got {rel_l1_thresh}")
+        obj = cls(num_steps)
+        obj._mode = "adaptive"
+        obj._rel_l1_thresh = rel_l1_thresh
+        return obj
+
     def reset(self) -> None:
         self._prev_input = None
         self._prev_summary = None
@@ -76,18 +92,47 @@ class WindowResidualController:
     def should_refresh(self, step_index: int, attn_input: mx.array | None = None) -> bool:
         """Decide whether to recompute full attention at ``step_index``.
 
-        ``attn_input`` is only consulted in ``adaptive`` mode; ignored
-        otherwise. Boundary steps (0 and ``num_steps - 1``) always return
-        ``True`` regardless of mode.
+        ``attn_input`` is required in ``adaptive`` mode and ignored
+        otherwise. Boundary steps (0 and ``num_steps - 1``) always
+        return ``True``.
         """
         self._check_step(step_index)
-        if step_index == 0 or step_index == self.num_steps - 1:
-            return True
+        is_boundary = step_index == 0 or step_index == self.num_steps - 1
         if self._mode == "fixed":
-            return step_index % self._refresh_every == 0
+            return is_boundary or step_index % self._refresh_every == 0
         if self._mode == "scheduled":
-            return step_index in self._refresh_set
+            return is_boundary or step_index in self._refresh_set
+        if self._mode == "adaptive":
+            return self._adaptive_decision(is_boundary, attn_input)
         raise RuntimeError(f"unhandled mode: {self._mode!r}")
+
+    def _adaptive_decision(self, is_boundary: bool, attn_input: mx.array | None) -> bool:
+        if attn_input is None:
+            if is_boundary and self._prev_input is None:
+                # First-ever call at boundary 0: nothing to seed against;
+                # caller still must provide the input.
+                raise RuntimeError("adaptive mode requires attn_input on every should_refresh call")
+            raise RuntimeError("adaptive mode requires attn_input on every should_refresh call")
+        new_summary = float(mx.mean(mx.abs(attn_input)).item())
+        if is_boundary:
+            self._prev_input = attn_input
+            self._prev_summary = new_summary
+            return True
+        prev = self._prev_input
+        prev_summary = self._prev_summary
+        if prev is None or prev_summary is None:
+            raise RuntimeError(
+                "adaptive mode: should_refresh called at a non-boundary step "
+                "before the first boundary seeded the cache."
+            )
+        if prev_summary == 0.0:
+            self._prev_input = attn_input
+            self._prev_summary = new_summary
+            return True
+        delta = float(mx.mean(mx.abs(attn_input - prev)).item()) / prev_summary
+        self._prev_input = attn_input
+        self._prev_summary = new_summary
+        return delta >= self._rel_l1_thresh
 
     def cache_residual(self, residual: mx.array) -> None:
         self._prev_residual = residual
