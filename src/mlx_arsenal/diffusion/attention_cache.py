@@ -187,3 +187,43 @@ class PerHeadAttentionCache:
         abs_x = mx.abs(x)
         reduce_axes = tuple(i for i in range(x.ndim) if i != 1)
         return mx.mean(abs_x, axis=reduce_axes)
+
+
+def splice_heads(
+    new_output: mx.array,
+    cached_output: mx.array,
+    recompute_mask: mx.array,
+) -> mx.array:
+    """Per-head select-between-tensors.
+
+    Where ``recompute_mask[h]`` is ``True``, take ``new_output[:, h]``;
+    where ``False``, take ``cached_output[:, h]``. The head axis is assumed
+    to be axis 1.
+
+    Args:
+        new_output: ``(B, num_heads, ...)`` newly computed attention output.
+        cached_output: ``(B, num_heads, ...)`` previously cached output, same
+            shape as ``new_output``.
+        recompute_mask: 1D bool array of length ``num_heads``.
+
+    Returns:
+        Spliced tensor with the same shape as ``new_output``.
+    """
+    if new_output.shape != cached_output.shape:
+        raise ValueError(
+            f"new_output and cached_output must match in shape, "
+            f"got {new_output.shape} vs {cached_output.shape}"
+        )
+    if recompute_mask.ndim != 1:
+        raise ValueError(f"recompute_mask must be 1D, got shape {recompute_mask.shape}")
+    if recompute_mask.dtype != mx.bool_:
+        raise ValueError(f"recompute_mask must be bool, got dtype {recompute_mask.dtype}")
+    if new_output.ndim < 2 or recompute_mask.shape[0] != new_output.shape[1]:
+        raise ValueError(
+            f"recompute_mask length must equal head axis (axis 1) of new_output, "
+            f"got mask {recompute_mask.shape} vs new_output {new_output.shape}"
+        )
+    shape = [1] * new_output.ndim
+    shape[1] = recompute_mask.shape[0]
+    mask_bc = recompute_mask.reshape(tuple(shape))
+    return mx.where(mask_bc, new_output, cached_output)

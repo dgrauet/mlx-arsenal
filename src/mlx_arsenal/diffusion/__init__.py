@@ -1,6 +1,6 @@
 """Diffusion primitives: timestep embeddings, schedulers, samplers, caching."""
 
-from .attention_cache import PerHeadAttentionCache, PerLayerAttentionCache
+from .attention_cache import PerHeadAttentionCache, PerLayerAttentionCache, splice_heads
 from .ddim import DDIMScheduler
 from .samplers import classifier_free_guidance, euler_step
 from .schedulers import (
@@ -23,4 +23,5 @@ __all__ = [
     "euler_step",
     "get_sampling_sigmas",
     "get_timestep_embedding",
+    "splice_heads",
 ]

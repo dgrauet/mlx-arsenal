@@ -3,7 +3,11 @@
 import mlx.core as mx
 import pytest
 
-from mlx_arsenal.diffusion import PerHeadAttentionCache, PerLayerAttentionCache
+from mlx_arsenal.diffusion import (
+    PerHeadAttentionCache,
+    PerLayerAttentionCache,
+    splice_heads,
+)
 
 
 class TestPerLayerAttentionCache:
@@ -131,3 +135,40 @@ class TestPerHeadAttentionCache:
             PerHeadAttentionCache(num_heads=2, num_steps=1, rel_l1_thresh=0.1)
         with pytest.raises(ValueError):
             PerHeadAttentionCache(num_heads=2, num_steps=4, rel_l1_thresh=0.0)
+
+
+class TestSpliceHeads:
+    def test_all_recompute(self):
+        new = mx.arange(2 * 3 * 4 * 5).reshape(2, 3, 4, 5).astype(mx.float32)
+        cached = mx.zeros_like(new)
+        mask = mx.array([True, True, True])
+        out = splice_heads(new, cached, mask)
+        assert mx.array_equal(out, new).item()
+
+    def test_all_cached(self):
+        new = mx.arange(2 * 3 * 4 * 5).reshape(2, 3, 4, 5).astype(mx.float32)
+        cached = mx.zeros_like(new)
+        mask = mx.array([False, False, False])
+        out = splice_heads(new, cached, mask)
+        assert mx.array_equal(out, cached).item()
+
+    def test_mixed(self):
+        new = mx.ones((1, 3, 2, 4)) * 7.0
+        cached = mx.ones((1, 3, 2, 4)) * 3.0
+        mask = mx.array([True, False, True])
+        out = splice_heads(new, cached, mask)
+        assert out[0, 0, 0, 0].item() == 7.0
+        assert out[0, 1, 0, 0].item() == 3.0
+        assert out[0, 2, 0, 0].item() == 7.0
+
+    def test_validation(self):
+        new = mx.ones((1, 3, 2, 4))
+        cached = mx.ones((1, 3, 2, 4))
+        with pytest.raises(ValueError):
+            splice_heads(new, mx.ones((1, 3, 2, 5)), mx.array([True, True, True]))
+        with pytest.raises(ValueError):
+            splice_heads(new, cached, mx.array([True, True]))
+        with pytest.raises(ValueError):
+            splice_heads(new, cached, mx.array([[True], [False], [True]]))
+        with pytest.raises(ValueError):
+            splice_heads(new, cached, mx.array([1, 0, 1]))  # not bool
