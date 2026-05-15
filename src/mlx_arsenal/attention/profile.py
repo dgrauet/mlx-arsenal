@@ -123,3 +123,73 @@ def classify_heads_from_probs(
     mass_frame = mx.mean(mass_frame, axis=0)  # (nH,)
     mass_pos = mx.mean(mass_pos, axis=0)
     return mx.stack([mass_frame, mass_pos], axis=1)
+
+
+def classify_heads_from_qk(
+    q: mx.array,
+    k: mx.array,
+    T: int,
+    H: int,
+    W: int,
+    *,
+    n_samples: int = 64,
+    key: mx.array | None = None,
+) -> mx.array:
+    """Per-head attention-mass fractions, sampled from Q,K.
+
+    Avoids materializing the full ``(B, num_heads, S, S)`` attention by
+    sampling ``n_samples`` queries uniformly per call. Reproducible: with a
+    fixed ``key``, returns identical results.
+
+    Args:
+        q: ``(B, num_heads, S, D)`` query tensor.
+        k: ``(B, num_heads, S, D)`` key tensor, same shape as ``q``.
+        T: Number of frames.
+        H: Latent height.
+        W: Latent width.
+        n_samples: How many queries to sample uniformly per call. Must satisfy
+            ``0 < n_samples <= S``.
+        key: ``mx.random`` key for the sampler. If ``None``, uses
+            ``mx.random.key(0)`` so default behavior is deterministic across
+            calls. Callers who want variance must pass their own key.
+
+    Returns:
+        ``(num_heads, 2)`` float array. Column 0 = mass on same-frame keys,
+        column 1 = mass on same-spatial-position keys.
+    """
+    _validate_thw(T, H, W)
+    if q.ndim != 4 or k.ndim != 4:
+        raise ValueError(
+            f"q and k must be 4D (B, nH, S, D), got q.shape={q.shape}, k.shape={k.shape}"
+        )
+    if q.shape != k.shape:
+        raise ValueError(f"q and k must have the same shape, got {q.shape} vs {k.shape}")
+    S = T * H * W
+    if q.shape[2] != S:
+        raise ValueError(f"q.shape[2] must equal T*H*W={S}, got {q.shape[2]}")
+    if n_samples <= 0 or n_samples > S:
+        raise ValueError(f"n_samples must be in (0, {S}], got {n_samples}")
+    if key is None:
+        key = mx.random.key(0)
+    perm = mx.random.permutation(S, key=key)
+    idx = perm[:n_samples]
+    q_sub = mx.take(q, idx, axis=2)
+    D = q.shape[3]
+    scale = 1.0 / mx.sqrt(mx.array(D, dtype=q.dtype))
+    logits = mx.matmul(q_sub, mx.swapaxes(k, 2, 3)) * scale
+    probs = mx.softmax(logits, axis=-1)  # (B, nH, n_samples, S)
+    t_flat, h_flat, w_flat = _thw_ids(T, H, W)
+    t_q = mx.take(t_flat, idx)
+    h_q = mx.take(h_flat, idx)
+    w_q = mx.take(w_flat, idx)
+    same_frame = mx.equal(mx.expand_dims(t_q, 1), mx.expand_dims(t_flat, 0))
+    same_h = mx.equal(mx.expand_dims(h_q, 1), mx.expand_dims(h_flat, 0))
+    same_w = mx.equal(mx.expand_dims(w_q, 1), mx.expand_dims(w_flat, 0))
+    same_pos = mx.logical_and(same_h, same_w)
+    same_frame_f = same_frame.astype(probs.dtype)
+    same_pos_f = same_pos.astype(probs.dtype)
+    mass_frame = mx.sum(probs * same_frame_f, axis=-1)  # (B, nH, n_samples)
+    mass_pos = mx.sum(probs * same_pos_f, axis=-1)
+    mass_frame = mx.mean(mass_frame, axis=(0, 2))
+    mass_pos = mx.mean(mass_pos, axis=(0, 2))
+    return mx.stack([mass_frame, mass_pos], axis=1)

@@ -3,7 +3,12 @@
 import mlx.core as mx
 import pytest
 
-from mlx_arsenal.attention import Kind, classify, classify_heads_from_probs
+from mlx_arsenal.attention import (
+    Kind,
+    classify,
+    classify_heads_from_probs,
+    classify_heads_from_qk,
+)
 
 
 class TestClassify:
@@ -105,3 +110,57 @@ class TestClassifyHeadsFromProbs:
             classify_heads_from_probs(mx.ones((S, S)), T, H, W)
         with pytest.raises(ValueError):
             classify_heads_from_probs(mx.ones((1, 1, S, S + 1)), T, H, W)
+
+
+class TestClassifyHeadsFromQK:
+    def test_shape(self):
+        T, H, W = 2, 2, 2
+        S = T * H * W
+        D = 4
+        q = mx.random.normal((2, 3, S, D), key=mx.random.key(0))
+        k = mx.random.normal((2, 3, S, D), key=mx.random.key(1))
+        scores = classify_heads_from_qk(q, k, T, H, W, n_samples=4)
+        assert scores.shape == (3, 2)
+
+    def test_deterministic_with_key(self):
+        T, H, W = 2, 2, 2
+        S = T * H * W
+        D = 4
+        q = mx.random.normal((1, 2, S, D), key=mx.random.key(42))
+        k = mx.random.normal((1, 2, S, D), key=mx.random.key(43))
+        key = mx.random.key(7)
+        a = classify_heads_from_qk(q, k, T, H, W, n_samples=4, key=key)
+        b = classify_heads_from_qk(q, k, T, H, W, n_samples=4, key=key)
+        assert mx.all(mx.equal(a, b)).item()
+
+    def test_recovers_spatial_when_qk_aligned(self):
+        # Construct Q, K so softmax concentrates mass on same-frame keys.
+        T, H, W = 2, 2, 2
+        S = T * H * W
+        D = T  # one-hot dim
+        ids = mx.repeat(mx.arange(T), H * W)  # (S,) frame id per token
+        onehot = mx.take(mx.eye(D), ids, axis=0)  # (S, D)
+        q = (onehot * 20.0).reshape(1, 1, S, D)
+        k = onehot.reshape(1, 1, S, D)
+        q = mx.broadcast_to(q, (1, 2, S, D))
+        k = mx.broadcast_to(k, (1, 2, S, D))
+        scores = classify_heads_from_qk(q, k, T, H, W, n_samples=S)
+        for h in range(2):
+            assert scores[h, 0].item() > 0.8
+
+    def test_validation(self):
+        T, H, W = 2, 2, 2
+        S = T * H * W
+        D = 4
+        q = mx.random.normal((1, 2, S, D), key=mx.random.key(0))
+        k = mx.random.normal((1, 2, S, D), key=mx.random.key(1))
+        with pytest.raises(ValueError):
+            classify_heads_from_qk(q, k, T, H, W, n_samples=0)
+        with pytest.raises(ValueError):
+            classify_heads_from_qk(q, k, T, H, W, n_samples=S + 1)
+        k_bad = mx.random.normal((1, 2, S, D + 1), key=mx.random.key(2))
+        with pytest.raises(ValueError):
+            classify_heads_from_qk(q, k_bad, T, H, W, n_samples=4)
+        q_bad = q.reshape(2, S, D)
+        with pytest.raises(ValueError):
+            classify_heads_from_qk(q_bad, q_bad, T, H, W, n_samples=4)
