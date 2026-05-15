@@ -4,8 +4,9 @@ import math
 from typing import cast
 
 import mlx.core as mx
+import pytest
 
-from mlx_arsenal.attention import causal_mask, sliding_window_mask
+from mlx_arsenal.attention import causal_mask, sliding_window_mask, spatial_only_mask
 
 
 class TestCausalMask:
@@ -58,3 +59,32 @@ class TestSlidingWindowMask:
         causal = causal_mask(seq_len=4)[0, 0]
         windowed = sliding_window_mask(seq_len=4, window_size=100)[0, 0]
         assert mx.array_equal(causal, windowed).item()
+
+
+class TestSpatialOnlyMask:
+    def test_shape(self):
+        m = spatial_only_mask(T=2, H=3, W=4)
+        assert m.shape == (1, 1, 24, 24)
+
+    def test_pattern(self):
+        # T=2, H=2, W=2 → S=8. Frame 0 = tokens 0..3, frame 1 = tokens 4..7.
+        m = cast(list[list[float]], spatial_only_mask(T=2, H=2, W=2)[0, 0].tolist())
+        for i in range(8):
+            for j in range(8):
+                same_frame = (i // 4) == (j // 4)
+                if same_frame:
+                    assert m[i][j] == 0.0
+                else:
+                    assert math.isinf(m[i][j]) and m[i][j] < 0
+
+    def test_dtype(self):
+        m = spatial_only_mask(T=2, H=2, W=2, dtype=mx.float16)
+        assert m.dtype == mx.float16
+
+    def test_validation(self):
+        with pytest.raises(ValueError):
+            spatial_only_mask(T=0, H=2, W=2)
+        with pytest.raises(ValueError):
+            spatial_only_mask(T=2, H=-1, W=2)
+        with pytest.raises(ValueError):
+            spatial_only_mask(T=2, H=2, W=0)
