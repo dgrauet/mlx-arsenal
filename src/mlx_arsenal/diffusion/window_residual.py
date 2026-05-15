@@ -82,6 +82,7 @@ class WindowResidualController:
         return obj
 
     def reset(self) -> None:
+        """Clear all state. Call at the start of each new generation."""
         self._prev_input = None
         self._prev_summary = None
         self._prev_residual = None
@@ -128,10 +129,12 @@ class WindowResidualController:
         return delta >= self._rel_l1_thresh
 
     def cache_residual(self, residual: mx.array) -> None:
+        """Store the ``full - window`` residual from the just-refreshed step for reuse."""
         self._prev_residual = residual
 
     @property
     def previous_residual(self) -> mx.array:
+        """Last cached residual. Raises before the first ``cache_residual`` call."""
         if self._prev_residual is None:
             raise RuntimeError(
                 "No residual cached yet — call cache_residual() after a "

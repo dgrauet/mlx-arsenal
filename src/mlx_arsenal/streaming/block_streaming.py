@@ -129,6 +129,7 @@ class BlockLoraSource:
         return out
 
     def close(self) -> None:
+        """Release the mmap'd LoRA dict. After this the source is unusable."""
         self._lora_data = {}
         self._block_keys = {}
 
@@ -198,6 +199,7 @@ class BlockStreamer:
 
     @property
     def block_prefix(self) -> str:
+        """State-dict key prefix identifying streamed block weights."""
         return self._block_prefix
 
     def block_keys(self, idx: int) -> list[str]:

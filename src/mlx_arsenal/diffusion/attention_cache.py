@@ -38,11 +38,17 @@ class PerLayerAttentionCache:
         self._prev_output: mx.array | None = None
 
     def reset(self) -> None:
+        """Clear all state. Call at the start of each new generation."""
         self._prev_input = None
         self._prev_summary = None
         self._prev_output = None
 
     def should_compute(self, step_index: int, attn_input: mx.array) -> bool:
+        """Decide whether to recompute attention at ``step_index``.
+
+        Side-effects: advances the stored previous input and summary. Must be
+        called once per step in order.
+        """
         self._check_step(step_index)
         if step_index == 0 or step_index == self.num_steps - 1:
             self._prev_input = attn_input
@@ -89,10 +95,12 @@ class PerLayerAttentionCache:
         return out
 
     def cache_output(self, output: mx.array) -> None:
+        """Store the attention output from the just-computed step for reuse on skip."""
         self._prev_output = output
 
     @property
     def previous_output(self) -> mx.array:
+        """Last cached attention output. Raises before the first ``cache_output`` call."""
         if self._prev_output is None:
             raise RuntimeError(
                 "No output cached yet — call cache_output() after a computed "
@@ -127,11 +135,17 @@ class PerHeadAttentionCache:
         self._prev_output: mx.array | None = None
 
     def reset(self) -> None:
+        """Clear all state. Call at the start of each new generation."""
         self._prev_input = None
         self._prev_summary = None
         self._prev_output = None
 
     def should_compute(self, step_index: int, attn_input: mx.array) -> mx.array:
+        """Per-head decide whether to recompute attention at ``step_index``.
+
+        Side-effects: advances the stored previous input and per-head summary.
+        Must be called once per step in order.
+        """
         self._check_step(step_index)
         head_summary = self._reduce_per_head(attn_input)
         if step_index == 0 or step_index == self.num_steps - 1:
@@ -181,10 +195,12 @@ class PerHeadAttentionCache:
         return out
 
     def cache_output(self, output: mx.array) -> None:
+        """Store the full ``(B, num_heads, ...)`` attention output for per-head splicing on skip."""
         self._prev_output = output
 
     @property
     def previous_output(self) -> mx.array:
+        """Last cached attention output. Raises before the first ``cache_output`` call."""
         if self._prev_output is None:
             raise RuntimeError(
                 "No output cached yet — call cache_output() after a computed "
