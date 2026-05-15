@@ -1,9 +1,24 @@
 name: Release
 
+# Two triggers cover both manual and automated release flows:
+#   - `push: tags: v*` fires when a contributor pushes a tag manually
+#     (or when release-please's tag is re-pushed from a non-Actions source).
+#   - `release: published` fires when a GitHub Release is published, which
+#     is the path release-please takes when it merges its own PR.
+#
+# In practice today, neither event dispatches when release-please runs
+# under the default GITHUB_TOKEN (GitHub suppresses Action-created events
+# to prevent recursive workflows). The long-term fix is a PAT on the
+# release-please action; until then, contributors re-push the tag from
+# their CLI to trigger this workflow. The `release: published` line is
+# defensive — it activates automatically the day release-please switches
+# to a PAT.
 on:
   push:
     tags:
       - "v*"
+  release:
+    types: [published]
 
 jobs:
   build:
@@ -16,9 +31,23 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify tag matches pyproject version
+      - name: Resolve tag name (push or release event)
+        id: refname
+        env:
+          PUSH_REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          if [ -n "$RELEASE_TAG" ]; then
+            echo "name=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=$PUSH_REF_NAME" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify tag matches pyproject version
+        env:
+          REF_NAME: ${{ steps.refname.outputs.name }}
+        run: |
+          TAG="${REF_NAME#v}"
           PKG=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           if [ "$TAG" != "$PKG" ]; then
             echo "Tag v$TAG does not match pyproject version $PKG"; exit 1
@@ -52,7 +81,7 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
 
   github-release:
-    name: Create GitHub release
+    name: Create or update GitHub release
     needs: publish-pypi
     runs-on: ubuntu-latest
     permissions:
@@ -67,12 +96,30 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Create release with auto-generated notes
+      - name: Resolve tag name (push or release event)
+        id: refname
+        env:
+          PUSH_REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            echo "name=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=$PUSH_REF_NAME" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update release with auto-generated notes
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.refname.outputs.name }}
+        # If release-please already created the release, `gh release create`
+        # exits non-zero. Fall back to uploading artifacts to the existing one.
         run: |
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --generate-notes \
-            dist/*
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --generate-notes \
+              dist/*
+          fi
