@@ -16,6 +16,7 @@ References:
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
@@ -56,7 +57,7 @@ class TeaCacheController:
         self._rescale = np.poly1d(self.coefficients)
         self._prev_modulated_input: mx.array | None = None
         self._accumulated: float = 0.0
-        self._prev_residual = None
+        self._prev_residual: Any | None = None
 
     def reset(self) -> None:
         """Clear all state. Call at the start of each new generation."""
@@ -76,17 +77,27 @@ class TeaCacheController:
             return True
 
         prev = self._prev_modulated_input
-        assert prev is not None, "should_compute called before step 0"
-        delta = (mx.mean(mx.abs(modulated_input - prev)) / mx.mean(mx.abs(prev))).item()
-        self._accumulated += float(self._rescale(delta))
+        if prev is None:
+            raise RuntimeError(
+                "should_compute called for a non-boundary step before step 0 — "
+                "boundary steps must run first to seed the modulation cache."
+            )
+        prev_norm = mx.mean(mx.abs(prev)).item()
         self._prev_modulated_input = modulated_input
+        if prev_norm == 0.0:
+            # Degenerate modulation (all-zeros). Delta is undefined; force compute
+            # and reset the accumulator rather than propagating inf/nan.
+            self._accumulated = 0.0
+            return True
+        delta = mx.mean(mx.abs(modulated_input - prev)).item() / prev_norm
+        self._accumulated += float(self._rescale(delta))
 
         if self._accumulated < self.rel_l1_thresh:
             return False
         self._accumulated = 0.0
         return True
 
-    def cache_residual(self, residual) -> None:
+    def cache_residual(self, residual: Any) -> None:
         """Store the residual from the just-computed step for reuse on skip.
 
         ``residual`` is whatever the caller wants to retrieve later via
@@ -97,7 +108,7 @@ class TeaCacheController:
         self._prev_residual = residual
 
     @property
-    def previous_residual(self):
+    def previous_residual(self) -> Any:
         """Last cached payload. Raises before the first ``cache_residual`` call."""
         if self._prev_residual is None:
             raise RuntimeError(
