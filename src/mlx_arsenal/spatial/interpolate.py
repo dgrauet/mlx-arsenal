@@ -3,6 +3,8 @@
 Equivalent to torch.nn.functional.interpolate for various modes.
 """
 
+from typing import cast
+
 import mlx.core as mx
 
 
@@ -40,8 +42,9 @@ def interpolate_nearest(
         else:
             target = list(size)
     else:
-        assert scale_factor is not None
-        target = [int(x.shape[d] * scale_factor) for d in spatial_dims]
+        # scale_factor is non-None here: the (None, None) case returned above.
+        sf = cast(float, scale_factor)
+        target = [int(x.shape[d] * sf) for d in spatial_dims]
 
     # Apply nearest-neighbor resize per dimension
     result = x

@@ -23,7 +23,8 @@ def pixel_shuffle(x: mx.array, upscale_factor: int) -> mx.array:
     """
     B, H, W, C = x.shape
     r = upscale_factor
-    assert C % (r * r) == 0, f"Channels {C} must be divisible by {r * r}"
+    if C % (r * r) != 0:
+        raise ValueError(f"Channels {C} must be divisible by {r * r}")
     oc = C // (r * r)
 
     x = x.reshape(B, H, W, oc, r, r)
@@ -47,7 +48,8 @@ def pixel_unshuffle(x: mx.array, downscale_factor: int) -> mx.array:
     """
     B, H, W, C = x.shape
     r = downscale_factor
-    assert H % r == 0 and W % r == 0, f"H={H}, W={W} must be divisible by {r}"
+    if H % r != 0 or W % r != 0:
+        raise ValueError(f"H={H}, W={W} must be divisible by {r}")
 
     x = x.reshape(B, H // r, r, W // r, r, C)
     x = x.transpose(0, 1, 3, 5, 2, 4)  # (B, H//r, W//r, C, r, r)
