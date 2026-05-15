@@ -173,3 +173,44 @@ def sliding_tile_block_mask(
     in_w = mx.less_equal(dw, window[2])
     valid = mx.logical_and(mx.logical_and(in_t, in_h), in_w)
     return _additive(valid, dtype)
+
+
+def radial_box_mask(
+    T: int,
+    H: int,
+    W: int,
+    *,
+    radius_t: int,
+    radius_s: float,
+    dtype: mx.Dtype = mx.float32,
+) -> mx.array:
+    """Hard-cutoff radial spatiotemporal mask.
+
+    Query `(t, h, w)` attends to `(t', h', w')` iff
+    `|t-t'| <= radius_t` AND `sqrt((h-h')**2 + (w-w')**2) <= radius_s`.
+
+    Args:
+        T: Number of frames.
+        H: Latent height.
+        W: Latent width.
+        radius_t: Non-negative temporal radius (frames, inclusive).
+        radius_s: Non-negative Euclidean spatial radius (latent units).
+        dtype: Output dtype.
+
+    Returns:
+        Additive mask of shape `(1, 1, T*H*W, T*H*W)`.
+    """
+    _validate_thw(T, H, W)
+    if radius_t < 0:
+        raise ValueError(f"radius_t must be non-negative, got {radius_t}")
+    if radius_s < 0:
+        raise ValueError(f"radius_s must be non-negative, got {radius_s}")
+    t_flat, h_flat, w_flat = _thw_coords(T, H, W)
+    dt = mx.abs(mx.expand_dims(t_flat, 0) - mx.expand_dims(t_flat, 1))
+    dh = mx.expand_dims(h_flat, 0) - mx.expand_dims(h_flat, 1)
+    dw = mx.expand_dims(w_flat, 0) - mx.expand_dims(w_flat, 1)
+    ds_sq = (dh * dh + dw * dw).astype(mx.float32)
+    in_t = mx.less_equal(dt, radius_t)
+    in_s = mx.less_equal(ds_sq, radius_s * radius_s)
+    valid = mx.logical_and(in_t, in_s)
+    return _additive(valid, dtype)

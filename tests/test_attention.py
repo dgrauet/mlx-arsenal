@@ -8,6 +8,7 @@ import pytest
 
 from mlx_arsenal.attention import (
     causal_mask,
+    radial_box_mask,
     sliding_tile_block_mask,
     sliding_tile_centered_mask,
     sliding_window_mask,
@@ -204,3 +205,40 @@ class TestSlidingTileBlockMask:
             sliding_tile_block_mask(T=2, H=4, W=4, tile=(1, 0, 2))
         with pytest.raises(ValueError):
             sliding_tile_block_mask(T=2, H=4, W=4, tile=(1, 2, 2), window=(0, -1, 0))
+
+
+class TestRadialBoxMask:
+    def test_shape(self):
+        m = radial_box_mask(T=2, H=3, W=4, radius_t=1, radius_s=2.0)
+        assert m.shape == (1, 1, 24, 24)
+
+    def test_pattern(self):
+        # T=2, H=3, W=3. radius_t=0 → same frame only. radius_s=1.0 → 4-neighbour (incl. self).
+        T, H, W = 2, 3, 3
+        m = cast(
+            list[list[float]],
+            radial_box_mask(T=T, H=H, W=W, radius_t=0, radius_s=1.0)[0, 0].tolist(),
+        )
+        for ti in range(T):
+            for hi in range(H):
+                for wi in range(W):
+                    i = ti * H * W + hi * W + wi
+                    for tj in range(T):
+                        for hj in range(H):
+                            for wj in range(W):
+                                j = tj * H * W + hj * W + wj
+                                dt = abs(ti - tj)
+                                ds = math.sqrt((hi - hj) ** 2 + (wi - wj) ** 2)
+                                ok = (dt <= 0) and (ds <= 1.0)
+                                if ok:
+                                    assert m[i][j] == 0.0
+                                else:
+                                    assert math.isinf(m[i][j]) and m[i][j] < 0
+
+    def test_validation(self):
+        with pytest.raises(ValueError):
+            radial_box_mask(T=2, H=2, W=2, radius_t=-1, radius_s=1.0)
+        with pytest.raises(ValueError):
+            radial_box_mask(T=2, H=2, W=2, radius_t=1, radius_s=-0.5)
+        with pytest.raises(ValueError):
+            radial_box_mask(T=0, H=2, W=2, radius_t=0, radius_s=1.0)
