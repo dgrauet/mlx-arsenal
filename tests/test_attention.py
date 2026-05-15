@@ -8,6 +8,7 @@ import pytest
 
 from mlx_arsenal.attention import (
     causal_mask,
+    sliding_tile_block_mask,
     sliding_tile_centered_mask,
     sliding_window_mask,
     spatial_only_mask,
@@ -156,3 +157,50 @@ class TestSlidingTileCenteredMask:
             sliding_tile_centered_mask(T=2, H=2, W=2, window=(-1, 0, 0))
         with pytest.raises(ValueError):
             sliding_tile_centered_mask(T=0, H=2, W=2, window=(1, 1, 1))
+
+
+class TestSlidingTileBlockMask:
+    def test_shape(self):
+        m = sliding_tile_block_mask(T=2, H=4, W=4, tile=(1, 2, 2))
+        assert m.shape == (1, 1, 32, 32)
+
+    def test_block_alignment(self):
+        # All queries in the same tile must have identical mask rows.
+        T, H, W = 2, 4, 4
+        tile = (1, 2, 2)
+        m = sliding_tile_block_mask(T=T, H=H, W=W, tile=tile, window=(0, 1, 1))[0, 0]
+        S = T * H * W
+        rows = cast(list[list[float]], m.tolist())
+        tile_ids = []
+        for t in range(T):
+            for h in range(H):
+                for w in range(W):
+                    tid = (t // tile[0], h // tile[1], w // tile[2])
+                    tile_ids.append(tid)
+        by_tile: dict[tuple[int, int, int], list[list[float]]] = {}
+        for i in range(S):
+            by_tile.setdefault(tile_ids[i], []).append(rows[i])
+        for tid, group in by_tile.items():
+            for row in group[1:]:
+                assert row == group[0], f"tile {tid} has non-uniform rows"
+
+    def test_window_zero_means_only_own_tile(self):
+        # tile=(1,2,2), window=(0,0,0) → query attends only to its own tile.
+        T, H, W = 2, 2, 2
+        m = sliding_tile_block_mask(T=T, H=H, W=W, tile=(1, 2, 2), window=(0, 0, 0))[0, 0]
+        grid = cast(list[list[float]], m.tolist())
+        for i in range(8):
+            for j in range(8):
+                same_tile = (i // 4) == (j // 4)
+                if same_tile:
+                    assert grid[i][j] == 0.0
+                else:
+                    assert math.isinf(grid[i][j]) and grid[i][j] < 0
+
+    def test_validation(self):
+        with pytest.raises(ValueError):
+            sliding_tile_block_mask(T=2, H=3, W=4, tile=(1, 2, 2))
+        with pytest.raises(ValueError):
+            sliding_tile_block_mask(T=2, H=4, W=4, tile=(1, 0, 2))
+        with pytest.raises(ValueError):
+            sliding_tile_block_mask(T=2, H=4, W=4, tile=(1, 2, 2), window=(0, -1, 0))

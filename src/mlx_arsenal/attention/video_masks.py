@@ -125,3 +125,51 @@ def sliding_tile_centered_mask(
     in_w = mx.less_equal(dw, window[2])
     valid = mx.logical_and(mx.logical_and(in_t, in_h), in_w)
     return _additive(valid, dtype)
+
+
+def sliding_tile_block_mask(
+    T: int,
+    H: int,
+    W: int,
+    *,
+    tile: tuple[int, int, int],
+    window: tuple[int, int, int] = (1, 1, 1),
+    dtype: mx.Dtype = mx.float32,
+) -> mx.array:
+    """Tile-block sliding attention (STA, ICML 2025).
+
+    Tokens are grouped into non-overlapping tiles of shape
+    `tile = (tt, th, tw)`. Every query in a tile attends to all keys in the
+    `±window` neighboring tiles (window in tile units, inclusive).
+
+    Args:
+        T: Number of frames. Must be divisible by `tile[0]`.
+        H: Latent height. Must be divisible by `tile[1]`.
+        W: Latent width. Must be divisible by `tile[2]`.
+        tile: `(tt, th, tw)` tile dims, all positive.
+        window: `(wt, wh, ww)` non-negative tile-unit radii.
+        dtype: Output dtype.
+
+    Returns:
+        Additive mask of shape `(1, 1, T*H*W, T*H*W)`.
+    """
+    _validate_thw(T, H, W)
+    tt, th, tw = tile
+    if tt <= 0 or th <= 0 or tw <= 0:
+        raise ValueError(f"tile dims must be positive, got {tile}")
+    if T % tt or H % th or W % tw:
+        raise ValueError(f"(T, H, W)={(T, H, W)} not divisible by tile={tile}")
+    if any(w < 0 for w in window):
+        raise ValueError(f"window radii must be non-negative, got {window}")
+    t_flat, h_flat, w_flat = _thw_coords(T, H, W)
+    t_tile = mx.floor_divide(t_flat, tt)
+    h_tile = mx.floor_divide(h_flat, th)
+    w_tile = mx.floor_divide(w_flat, tw)
+    dt = mx.abs(mx.expand_dims(t_tile, 0) - mx.expand_dims(t_tile, 1))
+    dh = mx.abs(mx.expand_dims(h_tile, 0) - mx.expand_dims(h_tile, 1))
+    dw = mx.abs(mx.expand_dims(w_tile, 0) - mx.expand_dims(w_tile, 1))
+    in_t = mx.less_equal(dt, window[0])
+    in_h = mx.less_equal(dh, window[1])
+    in_w = mx.less_equal(dw, window[2])
+    valid = mx.logical_and(mx.logical_and(in_t, in_h), in_w)
+    return _additive(valid, dtype)
