@@ -116,6 +116,8 @@ class DDIMScheduler:
 
     def set_timesteps(self, num_inference_steps: int) -> None:
         """Recompute the timestep schedule for ``num_inference_steps`` steps."""
+        if num_inference_steps <= 0:
+            raise ValueError(f"num_inference_steps must be positive, got {num_inference_steps}")
         self.num_inference_steps = num_inference_steps
 
         if self.timestep_spacing == "trailing":
