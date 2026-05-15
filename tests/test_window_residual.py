@@ -45,21 +45,40 @@ class TestFixed:
             ctrl.should_refresh(5)
 
 
+_CACHE_FACTORIES = [
+    pytest.param(
+        lambda: WindowResidualController.fixed(num_steps=4, refresh_every=2),
+        id="fixed",
+    ),
+    pytest.param(
+        lambda: WindowResidualController.scheduled(num_steps=4, refresh_steps=[2]),
+        id="scheduled",
+    ),
+    pytest.param(
+        lambda: WindowResidualController.adaptive(num_steps=4, rel_l1_thresh=0.1),
+        id="adaptive",
+    ),
+]
+
+
 class TestCommonCache:
-    def test_cache_and_previous_residual(self):
-        ctrl = WindowResidualController.fixed(num_steps=4, refresh_every=2)
+    @pytest.mark.parametrize("factory", _CACHE_FACTORIES)
+    def test_cache_and_previous_residual(self, factory):
+        ctrl = factory()
         r = mx.ones((1, 2, 4, 4)) * 3.14
         ctrl.cache_residual(r)
         out = ctrl.previous_residual
         assert mx.array_equal(out, r).item()
 
-    def test_previous_residual_raises_before_cache(self):
-        ctrl = WindowResidualController.fixed(num_steps=4, refresh_every=2)
+    @pytest.mark.parametrize("factory", _CACHE_FACTORIES)
+    def test_previous_residual_raises_before_cache(self, factory):
+        ctrl = factory()
         with pytest.raises(RuntimeError):
             _ = ctrl.previous_residual
 
-    def test_reset_clears_state(self):
-        ctrl = WindowResidualController.fixed(num_steps=4, refresh_every=2)
+    @pytest.mark.parametrize("factory", _CACHE_FACTORIES)
+    def test_reset_clears_state(self, factory):
+        ctrl = factory()
         ctrl.cache_residual(mx.ones((1, 2, 4, 4)))
         ctrl.reset()
         with pytest.raises(RuntimeError):
