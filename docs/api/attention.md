@@ -1,4 +1,4 @@
-# uattention
+# Attention
 
 ::: mlx_arsenal.attention
     options:

@@ -1,4 +1,4 @@
-# uspatial
+# Spatial
 
 ::: mlx_arsenal.spatial
     options:

@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — sparse-attention roadmap for video DiTs (étapes 1–6)
+
+- `mlx_arsenal.attention` video-DiT spatiotemporal masks
+  (#27): `spatial_only_mask`, `temporal_only_mask`,
+  `sliding_tile_block_mask` and `sliding_tile_centered_mask` (STA),
+  `radial_box_mask`, `radial_gaussian_mask`. All operate on T-major
+  flattened token sequences of length `T*H*W` and return additive
+  `(1, 1, S, S)` masks broadcastable into
+  `mx.fast.scaled_dot_product_attention`. Convention matches LTX,
+  CogVideoX, and `mlx_arsenal.spatial.patchify`.
+
+- `mlx_arsenal.attention` head-pattern profiler (#28):
+  `Kind` enum + `classify`, `classify_heads_from_qk`,
+  `classify_heads_from_probs`. Returns per-head fractions of attention
+  mass on same-frame / same-position keys, then converts to discrete
+  labels. The `from_qk` path samples queries to avoid materializing the
+  full `(S, S)` attention. Companion to the étape-1 masks for
+  Sparse-VideoGen-style head selection.
+
+- `mlx_arsenal.diffusion` attention output cache (AST,
+  #29): `PerLayerAttentionCache`, `PerHeadAttentionCache`,
+  `splice_heads`. Caches the attention sub-layer output across denoising
+  steps and reuses it on the next step when the input has barely
+  changed. Mirrors the `TeaCacheController` shape (`reset`,
+  `should_compute`, `cache_output`, `previous_output`) but at the
+  attention sub-layer instead of a whole transformer block.
+
+- `mlx_arsenal.diffusion` CFG-skip / ASC (#30):
+  `cfg_head_similarity`, `cfg_skip_mask`, `CFGSimilarityProfiler`,
+  `CFGSkipController`. Profiles per-head cond/uncond similarity during
+  warmup, builds a static skip schedule, applies it at runtime via
+  `splice_heads`. Two metrics — `cosine` (literature default) and
+  `relative_l1` (consistent with TeaCache / AttentionCache).
+
+- `mlx_arsenal.diffusion.WindowResidualController` (WA-RS,
+  #31). Step-aware controller for the
+  `full − window` attention residual cache. Three classmethod
+  constructors: `.fixed(refresh_every=K)`,
+  `.scheduled(refresh_steps=[…])`, and `.adaptive(rel_l1_thresh=t)` —
+  the adaptive variant reuses the same relative-L1 input-similarity
+  metric as `TeaCacheController`.
+
+- `mlx_arsenal.attention` block-contiguous token
+  permutation (SVG2, #32):
+  `block_contiguous_permutation`, `invert_permutation`. Sorts tokens by
+  importance score so high-importance ones cluster into the first
+  contiguous blocks (what block-sparse attention kernels actually need
+  to realize their savings). Pair with `mx.take(x, perm, axis=…)` to
+  permute Q/K/V and the inverse to unpermute the output.
+
+### Fixed
+
+- `docs/api/*.md` — H1 headings had a `u`-prefix typo on 11 of 15 module
+  pages (`# uattention`, `# uconv`, etc.); harmonized all titles to
+  Title case to match `mkdocs.yml` nav.
+
+### Changed (internal / docs only)
+
+- Added one-line docstrings to all 22 public methods and properties of
+  the new cache, profiler, and controller classes for consistent
+  mkdocstrings rendering.
+- Added ADR-0001 covering the sparse-attention roadmap.
+- Wired up release-please: synced `.release-please-manifest.json` to
+  the current released version, added the missing workflow, and
+  configured `extra-files` so pyproject version bumps on release-PR
+  merge.
+
 ## [0.8.0] — 2026-05-14
 
 ### Added

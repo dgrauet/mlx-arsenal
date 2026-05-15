@@ -1,4 +1,4 @@
-# utiling
+# Tiling
 
 ::: mlx_arsenal.tiling
     options:

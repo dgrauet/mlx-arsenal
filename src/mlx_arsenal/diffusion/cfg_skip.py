@@ -143,10 +143,12 @@ class CFGSimilarityProfiler:
         self._counts = mx.zeros((num_blocks,), dtype=mx.int32)
 
     def reset(self) -> None:
+        """Clear accumulated scores and counts. Call before a new warmup pass."""
         self._sum_scores = mx.zeros((self.num_blocks, self.num_heads), dtype=mx.float32)
         self._counts = mx.zeros((self.num_blocks,), dtype=mx.int32)
 
     def record(self, block_idx: int, cond: mx.array, uncond: mx.array) -> None:
+        """Accumulate per-head cond/uncond similarity for block ``block_idx``."""
         if block_idx < 0 or block_idx >= self.num_blocks:
             raise ValueError(f"block_idx must be in [0, {self.num_blocks}), got {block_idx}")
         if cond.ndim < 4 or cond.shape[1] != self.num_heads:
@@ -187,9 +189,11 @@ class CFGSimilarityProfiler:
 
     @property
     def call_counts(self) -> mx.array:
+        """``(num_blocks,)`` int32 count of :meth:`record` calls per block."""
         return self._counts
 
     def build_skip_schedule(self, threshold: float) -> mx.array:
+        """Threshold :attr:`scores` into a ``(num_blocks, num_heads)`` skip mask."""
         return cfg_skip_mask(self.scores, threshold=threshold, metric=self.metric)
 
 
@@ -216,17 +220,21 @@ class CFGSkipController:
         profiler: CFGSimilarityProfiler,
         threshold: float,
     ) -> "CFGSkipController":  # noqa: UP037
+        """Build a controller from a profiler by thresholding its scores."""
         return cls(profiler.build_skip_schedule(threshold))
 
     @property
     def num_blocks(self) -> int:
+        """Number of transformer blocks in the schedule."""
         return int(self._schedule.shape[0])
 
     @property
     def num_heads(self) -> int:
+        """Number of attention heads in the schedule."""
         return int(self._schedule.shape[1])
 
     def should_skip_uncond(self, block_idx: int) -> mx.array:
+        """``(num_heads,)`` bool mask — ``True`` heads skip uncond for this block."""
         self._check_block(block_idx)
         return self._schedule[block_idx]
 
@@ -236,6 +244,7 @@ class CFGSkipController:
         cond_output: mx.array,
         uncond_output: mx.array,
     ) -> mx.array:
+        """Apply the cached schedule to splice cond/uncond outputs (wraps :func:`splice_heads`)."""
         self._check_block(block_idx)
         if cond_output.shape != uncond_output.shape:
             raise ValueError(
