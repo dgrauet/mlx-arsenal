@@ -114,3 +114,80 @@ def cfg_skip_mask(
     if metric == "cosine":
         return mx.greater_equal(scores, threshold)
     return mx.less_equal(scores, threshold)
+
+
+class CFGSimilarityProfiler:
+    """Per-(block, head) running-mean similarity accumulator.
+
+    Records the per-head similarity of cond and uncond attention outputs
+    during a warmup pass and produces a static ``(num_blocks, num_heads)``
+    skip schedule.
+    """
+
+    def __init__(
+        self,
+        num_blocks: int,
+        num_heads: int,
+        *,
+        metric: Metric = "cosine",
+    ):
+        if num_blocks <= 0:
+            raise ValueError(f"num_blocks must be > 0, got {num_blocks}")
+        if num_heads <= 0:
+            raise ValueError(f"num_heads must be > 0, got {num_heads}")
+        _validate_metric(metric)
+        self.num_blocks = num_blocks
+        self.num_heads = num_heads
+        self.metric: Metric = metric
+        self._sum_scores = mx.zeros((num_blocks, num_heads), dtype=mx.float32)
+        self._counts = mx.zeros((num_blocks,), dtype=mx.int32)
+
+    def reset(self) -> None:
+        self._sum_scores = mx.zeros((self.num_blocks, self.num_heads), dtype=mx.float32)
+        self._counts = mx.zeros((self.num_blocks,), dtype=mx.int32)
+
+    def record(self, block_idx: int, cond: mx.array, uncond: mx.array) -> None:
+        if block_idx < 0 or block_idx >= self.num_blocks:
+            raise ValueError(f"block_idx must be in [0, {self.num_blocks}), got {block_idx}")
+        if cond.ndim < 4 or cond.shape[1] != self.num_heads:
+            raise ValueError(
+                f"cond must have head axis 1 of size {self.num_heads}, got shape {cond.shape}"
+            )
+        if cond.shape != uncond.shape:
+            raise ValueError(
+                f"cond and uncond shapes must match, got {cond.shape} vs {uncond.shape}"
+            )
+        sim = cfg_head_similarity(cond, uncond, metric=self.metric)  # (num_heads,)
+        # Update only row block_idx via gather + scatter-like recomposition.
+        prev_row = self._sum_scores[block_idx]
+        new_row = (prev_row + sim).astype(mx.float32)
+        # Reassemble _sum_scores with the updated row.
+        before = self._sum_scores[:block_idx]
+        after = self._sum_scores[block_idx + 1 :]
+        self._sum_scores = mx.concatenate(
+            [before, new_row.reshape(1, self.num_heads), after], axis=0
+        )
+        # Update count.
+        cnt_before = self._counts[:block_idx]
+        cnt_after = self._counts[block_idx + 1 :]
+        new_cnt = mx.array([self._counts[block_idx].item() + 1], dtype=mx.int32)
+        self._counts = mx.concatenate([cnt_before, new_cnt, cnt_after], axis=0)
+
+    @property
+    def scores(self) -> mx.array:
+        """``(num_blocks, num_heads)`` running mean. Zero-count blocks → 0.0."""
+        counts_f = self._counts.astype(mx.float32).reshape(self.num_blocks, 1)
+        zero = mx.equal(counts_f, 0.0)
+        safe_counts = mx.where(zero, mx.ones_like(counts_f), counts_f)
+        return mx.where(
+            mx.broadcast_to(zero, self._sum_scores.shape),
+            mx.zeros_like(self._sum_scores),
+            self._sum_scores / safe_counts,
+        )
+
+    @property
+    def call_counts(self) -> mx.array:
+        return self._counts
+
+    def build_skip_schedule(self, threshold: float) -> mx.array:
+        return cfg_skip_mask(self.scores, threshold=threshold, metric=self.metric)
