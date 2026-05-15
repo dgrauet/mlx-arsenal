@@ -16,6 +16,7 @@ from .schedulers import (
 )
 from .teacache import TeaCacheController
 from .timestep import TimestepEmbedding, get_timestep_embedding
+from .window_residual import WindowResidualController
 
 __all__ = [
     "CFGSimilarityProfiler",
@@ -26,6 +27,7 @@ __all__ = [
     "PerLayerAttentionCache",
     "TeaCacheController",
     "TimestepEmbedding",
+    "WindowResidualController",
     "cfg_head_similarity",
     "cfg_skip_mask",
     "classifier_free_guidance",
