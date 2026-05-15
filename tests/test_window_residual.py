@@ -64,3 +64,33 @@ class TestCommonCache:
         ctrl.reset()
         with pytest.raises(RuntimeError):
             _ = ctrl.previous_residual
+
+
+class TestScheduled:
+    def test_explicit_steps_refresh(self):
+        ctrl = WindowResidualController.scheduled(num_steps=10, refresh_steps=[2, 5, 7])
+        # 2, 5, 7 from list; 0 and 9 from boundary; others False.
+        expected = [True, False, True, False, False, True, False, True, False, True]
+        for step in range(10):
+            assert ctrl.should_refresh(step) is expected[step], f"step {step}"
+
+    def test_boundary_always_refresh_even_if_not_in_list(self):
+        ctrl = WindowResidualController.scheduled(num_steps=10, refresh_steps=[5])
+        assert ctrl.should_refresh(0) is True
+        assert ctrl.should_refresh(9) is True
+
+    def test_steps_outside_schedule_no_refresh(self):
+        ctrl = WindowResidualController.scheduled(num_steps=6, refresh_steps=[3])
+        assert ctrl.should_refresh(1) is False
+        assert ctrl.should_refresh(2) is False
+        assert ctrl.should_refresh(4) is False
+
+    def test_validation(self):
+        with pytest.raises(ValueError):
+            WindowResidualController.scheduled(num_steps=10, refresh_steps=[])
+        with pytest.raises(ValueError):
+            WindowResidualController.scheduled(num_steps=10, refresh_steps=[10])
+        with pytest.raises(ValueError):
+            WindowResidualController.scheduled(num_steps=10, refresh_steps=[-1])
+        with pytest.raises(ValueError):
+            WindowResidualController.scheduled(num_steps=1, refresh_steps=[0])

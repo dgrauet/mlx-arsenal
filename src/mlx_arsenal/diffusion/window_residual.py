@@ -18,6 +18,8 @@ References:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import mlx.core as mx
 
 
@@ -50,6 +52,22 @@ class WindowResidualController:
         obj._refresh_every = refresh_every
         return obj
 
+    @classmethod
+    def scheduled(cls, num_steps: int, *, refresh_steps: Sequence[int]) -> WindowResidualController:
+        """Refresh on step 0, ``num_steps - 1``, and every step in ``refresh_steps``."""
+        if not refresh_steps:
+            raise ValueError("refresh_steps must be non-empty")
+        if num_steps < 2:
+            # Hit here before `cls(num_steps)` so the error message stays specific.
+            raise ValueError(f"num_steps must be >= 2, got {num_steps}")
+        for s in refresh_steps:
+            if s < 0 or s >= num_steps:
+                raise ValueError(f"refresh_steps must be in [0, {num_steps}), got {s}")
+        obj = cls(num_steps)
+        obj._mode = "scheduled"
+        obj._refresh_set = frozenset(refresh_steps)
+        return obj
+
     def reset(self) -> None:
         self._prev_input = None
         self._prev_summary = None
@@ -67,6 +85,8 @@ class WindowResidualController:
             return True
         if self._mode == "fixed":
             return step_index % self._refresh_every == 0
+        if self._mode == "scheduled":
+            return step_index in self._refresh_set
         raise RuntimeError(f"unhandled mode: {self._mode!r}")
 
     def cache_residual(self, residual: mx.array) -> None:
