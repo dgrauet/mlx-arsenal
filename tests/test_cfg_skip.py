@@ -7,6 +7,7 @@ import pytest
 
 from mlx_arsenal.diffusion import (
     CFGSimilarityProfiler,
+    CFGSkipController,
     cfg_head_similarity,
     cfg_skip_mask,
 )
@@ -150,3 +151,68 @@ class TestCFGSimilarityProfiler:
             prof.record(2, x_ok, x_ok)
         with pytest.raises(ValueError):
             prof.record(0, x_wrong_heads, x_wrong_heads)
+
+
+class TestCFGSkipController:
+    def test_should_skip_uncond_returns_row(self):
+        sched = mx.array([[True, False, True], [False, False, True]])
+        ctrl = CFGSkipController(sched)
+        row0 = ctrl.should_skip_uncond(0)
+        row1 = ctrl.should_skip_uncond(1)
+        assert row0.tolist() == [True, False, True]
+        assert row1.tolist() == [False, False, True]
+
+    def test_apply_splices_correctly(self):
+        # 2 blocks, 3 heads. Block 0: skip head 0 and 2.
+        sched = mx.array([[True, False, True], [False, False, False]])
+        ctrl = CFGSkipController(sched)
+        cond = mx.ones((1, 3, 2, 4)) * 7.0
+        uncond = mx.ones((1, 3, 2, 4)) * 3.0
+        out = ctrl.apply(0, cond, uncond)
+        # Heads 0 and 2 from cond (7.0), head 1 from uncond (3.0).
+        assert out[0, 0, 0, 0].item() == 7.0
+        assert out[0, 1, 0, 0].item() == 3.0
+        assert out[0, 2, 0, 0].item() == 7.0
+        # Block 1: nothing skipped → all from uncond.
+        out2 = ctrl.apply(1, cond, uncond)
+        assert out2[0, 0, 0, 0].item() == 3.0
+        assert out2[0, 1, 0, 0].item() == 3.0
+        assert out2[0, 2, 0, 0].item() == 3.0
+
+    def test_from_profiler_classmethod(self):
+        prof = CFGSimilarityProfiler(num_blocks=2, num_heads=2, metric="cosine")
+        x = mx.random.normal((1, 2, 4, 4), key=mx.random.key(5))
+        prof.record(0, x, x)
+        prof.record(1, x, x)
+        ctrl = CFGSkipController.from_profiler(prof, threshold=0.5)
+        assert ctrl.num_blocks == 2
+        assert ctrl.num_heads == 2
+        # cosine = 1 everywhere → all True.
+        assert ctrl.should_skip_uncond(0).tolist() == [True, True]
+
+    def test_validation(self):
+        # Non-bool schedule.
+        bad_schedule_int: Any = mx.array([[1, 0], [0, 1]])
+        with pytest.raises(ValueError):
+            CFGSkipController(bad_schedule_int)
+        # Non-2D schedule.
+        bad_schedule_1d: Any = mx.array([True, False])
+        with pytest.raises(ValueError):
+            CFGSkipController(bad_schedule_1d)
+        sched = mx.array([[True, False], [False, True]])
+        ctrl = CFGSkipController(sched)
+        with pytest.raises(ValueError):
+            ctrl.should_skip_uncond(-1)
+        with pytest.raises(ValueError):
+            ctrl.should_skip_uncond(2)
+        # apply shape mismatch.
+        cond = mx.ones((1, 2, 2, 4))
+        uncond_bad = mx.ones((1, 2, 2, 5))
+        with pytest.raises(ValueError):
+            ctrl.apply(0, cond, uncond_bad)
+
+    def test_num_blocks_num_heads_props(self):
+        sched = mx.array([[True, False, True], [False, True, False]])
+        ctrl = CFGSkipController(sched)
+        assert ctrl.num_blocks == 2
+        assert ctrl.num_heads == 3

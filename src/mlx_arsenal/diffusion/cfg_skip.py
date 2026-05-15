@@ -26,7 +26,7 @@ from typing import Literal
 
 import mlx.core as mx
 
-from .attention_cache import splice_heads  # noqa: F401  (used by CFGSkipController in later task)
+from .attention_cache import splice_heads
 
 Metric = Literal["cosine", "relative_l1"]
 
@@ -191,3 +191,59 @@ class CFGSimilarityProfiler:
 
     def build_skip_schedule(self, threshold: float) -> mx.array:
         return cfg_skip_mask(self.scores, threshold=threshold, metric=self.metric)
+
+
+class CFGSkipController:
+    """Wraps a static ``(num_blocks, num_heads)`` bool skip schedule.
+
+    ``True`` at ``(b, h)`` means: for block ``b``, head ``h`` skips the
+    unconditional branch and reuses the conditional output. ``False`` means
+    the head computes uncond normally.
+    """
+
+    def __init__(self, schedule: mx.array):
+        if schedule.ndim != 2:
+            raise ValueError(
+                f"schedule must be 2D (num_blocks, num_heads), got shape {schedule.shape}"
+            )
+        if schedule.dtype != mx.bool_:
+            raise ValueError(f"schedule must be bool dtype, got {schedule.dtype}")
+        self._schedule = schedule
+
+    @classmethod
+    def from_profiler(
+        cls,
+        profiler: CFGSimilarityProfiler,
+        threshold: float,
+    ) -> "CFGSkipController":  # noqa: UP037
+        return cls(profiler.build_skip_schedule(threshold))
+
+    @property
+    def num_blocks(self) -> int:
+        return int(self._schedule.shape[0])
+
+    @property
+    def num_heads(self) -> int:
+        return int(self._schedule.shape[1])
+
+    def should_skip_uncond(self, block_idx: int) -> mx.array:
+        self._check_block(block_idx)
+        return self._schedule[block_idx]
+
+    def apply(
+        self,
+        block_idx: int,
+        cond_output: mx.array,
+        uncond_output: mx.array,
+    ) -> mx.array:
+        self._check_block(block_idx)
+        if cond_output.shape != uncond_output.shape:
+            raise ValueError(
+                f"cond_output and uncond_output must match in shape, "
+                f"got {cond_output.shape} vs {uncond_output.shape}"
+            )
+        return splice_heads(cond_output, uncond_output, self._schedule[block_idx])
+
+    def _check_block(self, block_idx: int) -> None:
+        if block_idx < 0 or block_idx >= self.num_blocks:
+            raise ValueError(f"block_idx must be in [0, {self.num_blocks}), got {block_idx}")
