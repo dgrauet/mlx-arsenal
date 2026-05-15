@@ -65,6 +65,16 @@ class PerLayerAttentionCache:
         return delta >= self.rel_l1_thresh
 
     def should_compute_from_summary(self, step_index: int, summary: float) -> bool:
+        """Decide using a caller-supplied scalar summary instead of a tensor.
+
+        ``summary`` is the analogue of
+        ``mean(abs(input - prev_input)) / mean(abs(prev_input))`` — the caller
+        has already done the math.
+
+        Do not interleave with :meth:`should_compute` within a single
+        denoising run: the two methods write semantically different values
+        into the internal previous-summary slot. Pick one mode per run.
+        """
         self._check_step(step_index)
         if step_index == 0 or step_index == self.num_steps - 1:
             self._prev_summary = summary
@@ -145,6 +155,13 @@ class PerHeadAttentionCache:
         return recompute
 
     def should_compute_from_summary(self, step_index: int, summary: mx.array) -> mx.array:
+        """Decide per head using a caller-supplied ``(num_heads,)`` summary.
+
+        ``summary[h]`` is the analogue of the per-head delta ratio. Do not
+        interleave with :meth:`should_compute` within a single denoising
+        run: the two methods write semantically different values into the
+        internal previous-summary slot. Pick one mode per run.
+        """
         self._check_step(step_index)
         if summary.ndim != 1 or summary.shape[0] != self.num_heads:
             raise ValueError(
