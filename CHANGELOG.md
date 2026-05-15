@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0](https://github.com/dgrauet/mlx-arsenal/compare/v0.8.0...v0.9.0) (2026-05-15)
+
+
+### Features
+
+* **attention:** block-contiguous token permutation (SVG2) ([#32](https://github.com/dgrauet/mlx-arsenal/issues/32)) ([eaf329e](https://github.com/dgrauet/mlx-arsenal/commit/eaf329ee9544793bb28a538b0e3a6e008b460782))
+* **attention:** head-pattern profiler for video DiTs ([#28](https://github.com/dgrauet/mlx-arsenal/issues/28)) ([af784aa](https://github.com/dgrauet/mlx-arsenal/commit/af784aa7fc6f0c9a086ed8924627a4bd09078911))
+* **attention:** video DiT spatiotemporal masks ([#27](https://github.com/dgrauet/mlx-arsenal/issues/27)) ([7eb93f3](https://github.com/dgrauet/mlx-arsenal/commit/7eb93f38a5734a11fe2b3019fd988c858666dbda))
+* **diffusion:** attention output cache (AST-style) ([#29](https://github.com/dgrauet/mlx-arsenal/issues/29)) ([c8faf5e](https://github.com/dgrauet/mlx-arsenal/commit/c8faf5e5f25de1e7894e21385e2ed4e903859110))
+* **diffusion:** cfg-skip (ASC) for video DiTs ([#30](https://github.com/dgrauet/mlx-arsenal/issues/30)) ([8f91d3d](https://github.com/dgrauet/mlx-arsenal/commit/8f91d3dc7e54bb96e130233f7597e0ce3c244f46))
+* **diffusion:** window-residual controller (WA-RS) ([#31](https://github.com/dgrauet/mlx-arsenal/issues/31)) ([89eea40](https://github.com/dgrauet/mlx-arsenal/commit/89eea408705ce2802097c75258e0b9cee079c3a1))
+
+
+### Reverts
+
+* codecov coverage upload and README badge ([#21](https://github.com/dgrauet/mlx-arsenal/issues/21)) ([#22](https://github.com/dgrauet/mlx-arsenal/issues/22)) ([d5d69a8](https://github.com/dgrauet/mlx-arsenal/commit/d5d69a8afdacd8135efaefcfcd239d03bf377b36))
+
+
+### Documentation
+
+* refresh CLAUDE.md submodule list ([#26](https://github.com/dgrauet/mlx-arsenal/issues/26)) ([fd799f6](https://github.com/dgrauet/mlx-arsenal/commit/fd799f613d29899378ae6439ddaa3c5c8c924751))
+
 ## [Unreleased]
 
 ### Added — sparse-attention roadmap for video DiTs (étapes 1–6)
