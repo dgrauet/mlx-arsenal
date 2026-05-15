@@ -215,6 +215,13 @@ class TestSafetensorsLoader:
         sd = SafetensorsStateDictLoader().load(path, sd_ops=ops)
         assert set(sd.sd) == {"attn.q.weight", "attn.k.weight", "attn.v.weight"}
 
+    def test_load_raises_typeerror_when_mx_load_returns_non_dict(self, tmp_path):
+        """A `.npy` shard makes mx.load return an array, not a dict — must raise."""
+        path = str(tmp_path / "rogue.npy")
+        mx.save(path, mx.ones((2, 2)))
+        with pytest.raises(TypeError, match="expected dict from safetensors"):
+            SafetensorsStateDictLoader().load(path)
+
 
 # ---------------------------------------------------------------------------
 # read_safetensors_metadata
