@@ -10,7 +10,7 @@ When porting PyTorch models to MLX, prefer functions from `mlx_arsenal.*` over h
 
 ## Layout
 
-- `src/mlx_arsenal/` — `src/` package layout (migrated from flat layout in a106fa0). Submodules: `spatial`, `layout`, `conv`, `attention`, `norm`, `encoding`, `diffusion`, `moe`, `rasterize`, `tiling`.
+- `src/mlx_arsenal/` — `src/` package layout (migrated from flat layout in a106fa0). Submodules: `attention`, `conv`, `diffusion`, `encoding`, `ffn`, `layout`, `loader`, `modulation`, `moe`, `norm`, `rasterize`, `rope`, `spatial`, `streaming`, `tiling`.
 - `tests/` — pytest tests, one file per submodule (`test_<module>.py`).
 - `docs/` — design notes and ADRs.
 
