@@ -1,4 +1,10 @@
 from mlx_arsenal.attention.masks import causal_mask, sliding_window_mask
+from mlx_arsenal.attention.profile import (
+    Kind,
+    classify,
+    classify_heads_from_probs,
+    classify_heads_from_qk,
+)
 from mlx_arsenal.attention.video_masks import (
     radial_box_mask,
     radial_gaussian_mask,
@@ -9,7 +15,11 @@ from mlx_arsenal.attention.video_masks import (
 )
 
 __all__ = [
+    "Kind",
     "causal_mask",
+    "classify",
+    "classify_heads_from_probs",
+    "classify_heads_from_qk",
     "radial_box_mask",
     "radial_gaussian_mask",
     "sliding_tile_block_mask",
