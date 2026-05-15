@@ -214,3 +214,51 @@ def radial_box_mask(
     in_s = mx.less_equal(ds_sq, radius_s * radius_s)
     valid = mx.logical_and(in_t, in_s)
     return _additive(valid, dtype)
+
+
+def radial_gaussian_mask(
+    T: int,
+    H: int,
+    W: int,
+    *,
+    sigma_t: float,
+    sigma_s: float,
+    cutoff: float = -6.0,
+    dtype: mx.Dtype = mx.float32,
+) -> mx.array:
+    """Exponential-decay radial mask (dense log-weights).
+
+    Value at `(i, j)` is `-(dt**2 / (2 sigma_t**2) + ds**2 / (2 sigma_s**2))`
+    where `ds**2 = (h-h')**2 + (w-w')**2`. Values below `cutoff` are clamped
+    to `-inf` so the mask is usable in fp16 without underflow.
+
+    Args:
+        T: Number of frames.
+        H: Latent height.
+        W: Latent width.
+        sigma_t: Temporal scale, strictly positive.
+        sigma_s: Spatial scale, strictly positive.
+        cutoff: Strictly negative log-weight floor; values below are replaced
+            by `-inf`. Default `-6.0` ≈ exp(-6) ≈ 0.0025.
+        dtype: Output dtype.
+
+    Returns:
+        Additive mask of shape `(1, 1, T*H*W, T*H*W)`.
+    """
+    _validate_thw(T, H, W)
+    if sigma_t <= 0:
+        raise ValueError(f"sigma_t must be positive, got {sigma_t}")
+    if sigma_s <= 0:
+        raise ValueError(f"sigma_s must be positive, got {sigma_s}")
+    if cutoff >= 0:
+        raise ValueError(f"cutoff must be negative, got {cutoff}")
+    t_flat, h_flat, w_flat = _thw_coords(T, H, W)
+    dt = (mx.expand_dims(t_flat, 0) - mx.expand_dims(t_flat, 1)).astype(mx.float32)
+    dh = (mx.expand_dims(h_flat, 0) - mx.expand_dims(h_flat, 1)).astype(mx.float32)
+    dw = (mx.expand_dims(w_flat, 0) - mx.expand_dims(w_flat, 1)).astype(mx.float32)
+    log_w = -(dt * dt / (2 * sigma_t * sigma_t) + (dh * dh + dw * dw) / (2 * sigma_s * sigma_s))
+    log_w = log_w.astype(dtype)
+    S = T * H * W
+    neg_inf = mx.full((S, S), float("-inf"), dtype=dtype)
+    out = mx.where(mx.less(log_w, cutoff), neg_inf, log_w)
+    return out.reshape(1, 1, S, S)

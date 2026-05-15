@@ -9,6 +9,7 @@ import pytest
 from mlx_arsenal.attention import (
     causal_mask,
     radial_box_mask,
+    radial_gaussian_mask,
     sliding_tile_block_mask,
     sliding_tile_centered_mask,
     sliding_window_mask,
@@ -242,3 +243,46 @@ class TestRadialBoxMask:
             radial_box_mask(T=2, H=2, W=2, radius_t=1, radius_s=-0.5)
         with pytest.raises(ValueError):
             radial_box_mask(T=0, H=2, W=2, radius_t=0, radius_s=1.0)
+
+
+class TestRadialGaussianMask:
+    def test_shape(self):
+        m = radial_gaussian_mask(T=2, H=3, W=4, sigma_t=1.0, sigma_s=1.5)
+        assert m.shape == (1, 1, 24, 24)
+
+    def test_self_is_zero(self):
+        m = radial_gaussian_mask(T=2, H=2, W=2, sigma_t=1.0, sigma_s=1.0)[0, 0]
+        diag = cast(list[float], mx.diagonal(m).tolist())
+        for v in diag:
+            assert v == 0.0
+
+    def test_monotonic_decay(self):
+        # Along temporal axis, fixed (h, w): log-weight strictly decreases with |Δt|.
+        T, H, W = 4, 2, 2
+        raw = radial_gaussian_mask(T=T, H=H, W=W, sigma_t=1.0, sigma_s=10.0, cutoff=-1000.0)
+        m = cast(list[list[float]], raw[0, 0].tolist())
+        same_pos_indices = [t * H * W for t in range(T)]
+        vals = [m[0][k] for k in same_pos_indices]
+        for k in range(1, len(vals)):
+            assert vals[k] < vals[k - 1], f"non-monotonic at t={k}: {vals}"
+
+    def test_cutoff_clamps_to_neg_inf(self):
+        # Very tight sigmas with cutoff=-1 → everything except self gets -inf.
+        m = radial_gaussian_mask(T=2, H=2, W=2, sigma_t=0.01, sigma_s=0.01, cutoff=-1.0)[0, 0]
+        grid = cast(list[list[float]], m.tolist())
+        for i in range(8):
+            for j in range(8):
+                if i == j:
+                    assert grid[i][j] == 0.0
+                else:
+                    assert math.isinf(grid[i][j]) and grid[i][j] < 0
+
+    def test_validation(self):
+        with pytest.raises(ValueError):
+            radial_gaussian_mask(T=2, H=2, W=2, sigma_t=0.0, sigma_s=1.0)
+        with pytest.raises(ValueError):
+            radial_gaussian_mask(T=2, H=2, W=2, sigma_t=1.0, sigma_s=-0.5)
+        with pytest.raises(ValueError):
+            radial_gaussian_mask(T=2, H=2, W=2, sigma_t=1.0, sigma_s=1.0, cutoff=0.0)
+        with pytest.raises(ValueError):
+            radial_gaussian_mask(T=0, H=2, W=2, sigma_t=1.0, sigma_s=1.0)
