@@ -8,6 +8,7 @@ import pytest
 
 from mlx_arsenal.attention import (
     causal_mask,
+    sliding_tile_centered_mask,
     sliding_window_mask,
     spatial_only_mask,
     temporal_only_mask,
@@ -120,3 +121,38 @@ class TestTemporalOnlyMask:
             temporal_only_mask(T=0, H=2, W=2)
         with pytest.raises(ValueError):
             temporal_only_mask(T=2, H=2, W=-1)
+
+
+class TestSlidingTileCenteredMask:
+    def test_shape(self):
+        m = sliding_tile_centered_mask(T=2, H=3, W=4, window=(0, 1, 1))
+        assert m.shape == (1, 1, 24, 24)
+
+    def test_pattern_zero_window(self):
+        # window=(0,0,0) → only attend to self.
+        mask = sliding_tile_centered_mask(T=2, H=2, W=2, window=(0, 0, 0))[0, 0]
+        m = cast(list[list[float]], mask.tolist())
+        for i in range(8):
+            for j in range(8):
+                if i == j:
+                    assert m[i][j] == 0.0
+                else:
+                    assert math.isinf(m[i][j]) and m[i][j] < 0
+
+    def test_pattern_spatial_only_window(self):
+        # window=(0, large, large) ≡ spatial_only.
+        m = sliding_tile_centered_mask(T=2, H=2, W=2, window=(0, 99, 99))[0, 0]
+        ref = spatial_only_mask(T=2, H=2, W=2)[0, 0]
+        assert mx.array_equal(m, ref).item()
+
+    def test_pattern_temporal_only_window(self):
+        # window=(large, 0, 0) ≡ temporal_only.
+        m = sliding_tile_centered_mask(T=2, H=2, W=2, window=(99, 0, 0))[0, 0]
+        ref = temporal_only_mask(T=2, H=2, W=2)[0, 0]
+        assert mx.array_equal(m, ref).item()
+
+    def test_validation(self):
+        with pytest.raises(ValueError):
+            sliding_tile_centered_mask(T=2, H=2, W=2, window=(-1, 0, 0))
+        with pytest.raises(ValueError):
+            sliding_tile_centered_mask(T=0, H=2, W=2, window=(1, 1, 1))

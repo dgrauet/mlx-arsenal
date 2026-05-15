@@ -88,3 +88,40 @@ def temporal_only_mask(T: int, H: int, W: int, *, dtype: mx.Dtype = mx.float32) 
     same_w = mx.equal(mx.expand_dims(w_flat, 0), mx.expand_dims(w_flat, 1))
     valid = mx.logical_and(same_h, same_w)
     return _additive(valid, dtype)
+
+
+def sliding_tile_centered_mask(
+    T: int,
+    H: int,
+    W: int,
+    *,
+    window: tuple[int, int, int],
+    dtype: mx.Dtype = mx.float32,
+) -> mx.array:
+    """Per-query centered spatiotemporal window mask.
+
+    Token `(t, h, w)` attends to `(t', h', w')` iff
+    `|t-t'| <= window[0]` AND `|h-h'| <= window[1]` AND `|w-w'| <= window[2]`.
+
+    Args:
+        T: Number of frames.
+        H: Latent height.
+        W: Latent width.
+        window: `(dt, dh, dw)` non-negative inclusive radii.
+        dtype: Output dtype.
+
+    Returns:
+        Additive mask of shape `(1, 1, T*H*W, T*H*W)`.
+    """
+    _validate_thw(T, H, W)
+    if any(w < 0 for w in window):
+        raise ValueError(f"window radii must be non-negative, got {window}")
+    t_flat, h_flat, w_flat = _thw_coords(T, H, W)
+    dt = mx.abs(mx.expand_dims(t_flat, 0) - mx.expand_dims(t_flat, 1))
+    dh = mx.abs(mx.expand_dims(h_flat, 0) - mx.expand_dims(h_flat, 1))
+    dw = mx.abs(mx.expand_dims(w_flat, 0) - mx.expand_dims(w_flat, 1))
+    in_t = mx.less_equal(dt, window[0])
+    in_h = mx.less_equal(dh, window[1])
+    in_w = mx.less_equal(dw, window[2])
+    valid = mx.logical_and(mx.logical_and(in_t, in_h), in_w)
+    return _additive(valid, dtype)
