@@ -1,4 +1,4 @@
-# umoe
+# MoE
 
 ::: mlx_arsenal.moe
     options:

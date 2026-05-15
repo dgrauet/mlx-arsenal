@@ -1,4 +1,4 @@
-# udiffusion
+# Diffusion
 
 ::: mlx_arsenal.diffusion
     options:

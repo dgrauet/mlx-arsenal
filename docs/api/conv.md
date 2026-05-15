@@ -1,4 +1,4 @@
-# uconv
+# Conv
 
 ::: mlx_arsenal.conv
     options:

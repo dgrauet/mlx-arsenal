@@ -1,4 +1,4 @@
-# uencoding
+# Encoding
 
 ::: mlx_arsenal.encoding
     options:

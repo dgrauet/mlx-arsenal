@@ -1,4 +1,4 @@
-# ustreaming
+# Streaming
 
 ::: mlx_arsenal.streaming
     options:

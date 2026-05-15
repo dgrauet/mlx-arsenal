@@ -1,4 +1,4 @@
-# ulayout
+# Layout
 
 ::: mlx_arsenal.layout
     options:

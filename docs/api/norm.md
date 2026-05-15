@@ -1,4 +1,4 @@
-# unorm
+# Norm
 
 ::: mlx_arsenal.norm
     options:

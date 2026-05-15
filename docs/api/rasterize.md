@@ -1,4 +1,4 @@
-# urasterize
+# Rasterize
 
 ::: mlx_arsenal.rasterize
     options:
