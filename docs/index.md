@@ -24,10 +24,10 @@ place so each port doesn't ship a sixth copy.
 | [`spatial`](api/spatial.md) | `interpolate_nearest`, `interpolate_3d`, `avg_pool1d`, `replicate_pad`, `upsample_nearest/bilinear`, `pixel_shuffle/unshuffle`, `patchify/unpatchify`, `PatchEmbed2d/3d` | `F.interpolate`, `F.avg_pool1d`, `F.pad`, `F.pixel_shuffle` |
 | [`layout`](api/layout.md) | `to_channels_last/first`, `channels_last` ctx, `convert_conv_weights`, `load_safetensors` | NCHW ↔ NHWC, weight transposition |
 | [`conv`](api/conv.md) | `weight_norm`, `WeightNorm` | `nn.utils.weight_norm` |
-| [`attention`](api/attention.md) | `causal_mask`, `sliding_window_mask` | Attention mask creation |
+| [`attention`](api/attention.md) | `causal_mask`, `sliding_window_mask`, video-DiT masks (`spatial_only_mask`, `temporal_only_mask`, `sliding_tile_centered_mask`, `sliding_tile_block_mask`, `radial_box_mask`, `radial_gaussian_mask`, `frame_stride_diagonal_mask`, `vertical_stripe_mask`), head-pattern profiling (`Kind`, `classify`, `classify_heads_from_qk/probs`), token permutation (`block_contiguous_permutation`, `invert_permutation`) | Attention masks (LLM + sparse video DiT), head archetype classification, SVG2-style permutation |
 | [`norm`](api/norm.md) | `PixelNorm`, `ScaleNorm` | Custom normalization layers |
 | [`encoding`](api/encoding.md) | `FourierEmbedder` | Sinusoidal positional encoding |
-| [`diffusion`](api/diffusion.md) | `get_timestep_embedding`, `TimestepEmbedding`, `FlowMatchEulerDiscreteScheduler`, `DDIMScheduler`, `euler_step`, `classifier_free_guidance`, `TeaCacheController` | Flow-matching + DDIM diffusion primitives |
+| [`diffusion`](api/diffusion.md) | `get_timestep_embedding`, `TimestepEmbedding`, `FlowMatchEulerDiscreteScheduler`, `DDIMScheduler`, `euler_step`, `classifier_free_guidance`, step-aware caches (`TeaCacheController`, `PerLayerAttentionCache`, `PerHeadAttentionCache`, `WindowResidualController`, `VerifiedFeatureCache`), CFG-skip (`CFGSkipController`, `CFGSimilarityProfiler`) | Flow-matching + DDIM diffusion primitives, cache-then-reuse and forecast-then-verify controllers, CFG acceleration |
 | [`moe`](api/moe.md) | `MoEGate`, `MoELayer` | Top-k mixture-of-experts dispatch |
 | [`rasterize`](api/rasterize.md) | `rasterize_triangles`, `interpolate` | Differentiable triangle rasterization |
 | [`tiling`](api/tiling.md) | `tiled_process`, `temporal_slice_process` | Memory-efficient large tensor processing |

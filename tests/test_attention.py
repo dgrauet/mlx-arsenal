@@ -8,6 +8,7 @@ import pytest
 
 from mlx_arsenal.attention import (
     causal_mask,
+    frame_stride_diagonal_mask,
     radial_box_mask,
     radial_gaussian_mask,
     sliding_tile_block_mask,
@@ -15,6 +16,7 @@ from mlx_arsenal.attention import (
     sliding_window_mask,
     spatial_only_mask,
     temporal_only_mask,
+    vertical_stripe_mask,
 )
 
 
@@ -286,3 +288,103 @@ class TestRadialGaussianMask:
             radial_gaussian_mask(T=2, H=2, W=2, sigma_t=1.0, sigma_s=1.0, cutoff=0.0)
         with pytest.raises(ValueError):
             radial_gaussian_mask(T=0, H=2, W=2, sigma_t=1.0, sigma_s=1.0)
+
+
+class TestFrameStrideDiagonalMask:
+    def test_shape(self):
+        m = frame_stride_diagonal_mask(T=3, H=2, W=2, num_diagonals=2)
+        assert m.shape == (1, 1, 12, 12)
+
+    def test_main_diagonal_only(self):
+        # num_diagonals=1 → only the self-attention diagonal is open.
+        m = cast(
+            list[list[float]],
+            frame_stride_diagonal_mask(T=2, H=2, W=2, num_diagonals=1)[0, 0].tolist(),
+        )
+        for i in range(8):
+            for j in range(8):
+                if i == j:
+                    assert m[i][j] == 0.0
+                else:
+                    assert math.isinf(m[i][j]) and m[i][j] < 0
+
+    def test_multi_diagonal_pattern(self):
+        # T=3, H=2, W=2 → HW=4. num_diagonals=2 → bands at offsets {-4, 0, +4}.
+        m = cast(
+            list[list[float]],
+            frame_stride_diagonal_mask(T=3, H=2, W=2, num_diagonals=2)[0, 0].tolist(),
+        )
+        for i in range(12):
+            for j in range(12):
+                offset = j - i
+                allowed = offset in (-4, 0, 4)
+                if allowed:
+                    assert m[i][j] == 0.0
+                else:
+                    assert math.isinf(m[i][j]) and m[i][j] < 0
+
+    def test_full_temporal_equivalence(self):
+        # num_diagonals=T matches temporal_only_mask (same-(h,w) across all frames).
+        m = frame_stride_diagonal_mask(T=3, H=2, W=2, num_diagonals=3)[0, 0]
+        ref = temporal_only_mask(T=3, H=2, W=2)[0, 0]
+        assert mx.array_equal(m, ref).item()
+
+    def test_dtype(self):
+        m = frame_stride_diagonal_mask(T=2, H=2, W=2, num_diagonals=2, dtype=mx.float16)
+        assert m.dtype == mx.float16
+
+    def test_validation(self):
+        with pytest.raises(ValueError):
+            frame_stride_diagonal_mask(T=2, H=2, W=2, num_diagonals=0)
+        with pytest.raises(ValueError):
+            frame_stride_diagonal_mask(T=2, H=2, W=2, num_diagonals=-1)
+        with pytest.raises(ValueError):
+            frame_stride_diagonal_mask(T=0, H=2, W=2, num_diagonals=1)
+
+
+class TestVerticalStripeMask:
+    def test_shape(self):
+        m = vertical_stripe_mask(T=2, H=2, W=2, key_indices=mx.array([0, 3]))
+        assert m.shape == (1, 1, 8, 8)
+
+    def test_pattern(self):
+        # Allow only keys at columns {0, 5} for every query.
+        keys = [0, 5]
+        m = cast(
+            list[list[float]],
+            vertical_stripe_mask(T=2, H=2, W=2, key_indices=mx.array(keys))[0, 0].tolist(),
+        )
+        for i in range(8):
+            for j in range(8):
+                if j in keys:
+                    assert m[i][j] == 0.0
+                else:
+                    assert math.isinf(m[i][j]) and m[i][j] < 0
+
+    def test_single_anchor(self):
+        m = vertical_stripe_mask(T=2, H=2, W=2, key_indices=mx.array([4]))[0, 0]
+        # Only column 4 is open for every row.
+        assert m[0, 4].item() == 0.0
+        assert math.isinf(m[0, 0].item())
+
+    def test_dtype(self):
+        m = vertical_stripe_mask(T=2, H=2, W=2, key_indices=mx.array([0]), dtype=mx.float16)
+        assert m.dtype == mx.float16
+
+    def test_validation_empty(self):
+        with pytest.raises(ValueError):
+            vertical_stripe_mask(T=2, H=2, W=2, key_indices=mx.array([], dtype=mx.int32))
+
+    def test_validation_out_of_range(self):
+        with pytest.raises(ValueError):
+            vertical_stripe_mask(T=2, H=2, W=2, key_indices=mx.array([99]))
+        with pytest.raises(ValueError):
+            vertical_stripe_mask(T=2, H=2, W=2, key_indices=mx.array([-1]))
+
+    def test_validation_wrong_rank(self):
+        with pytest.raises(ValueError):
+            vertical_stripe_mask(T=2, H=2, W=2, key_indices=mx.array([[0, 1]]))
+
+    def test_validation_thw(self):
+        with pytest.raises(ValueError):
+            vertical_stripe_mask(T=0, H=2, W=2, key_indices=mx.array([0]))

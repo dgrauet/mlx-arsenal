@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0](https://github.com/dgrauet/mlx-arsenal/compare/v0.9.0...v0.10.0) (2026-05-20)
+
+
+### Features
+
+* **attention:** frame-stride diagonal & vertical-stripe masks (Sparse-vDiT) ([#38](https://github.com/dgrauet/mlx-arsenal/issues/38)) ([a7d5e3e](https://github.com/dgrauet/mlx-arsenal/commit/a7d5e3ead65e69c2443ab04c7de8f36c7a72a655))
+* **diffusion:** verified feature caching (SpeCa-style) ([#40](https://github.com/dgrauet/mlx-arsenal/issues/40)) ([1390cf4](https://github.com/dgrauet/mlx-arsenal/commit/1390cf4697b1bc368456e3e90aa857cdb8205ac2))
+
 ## [Unreleased]
 
 ## [0.9.0] — 2026-05-15
