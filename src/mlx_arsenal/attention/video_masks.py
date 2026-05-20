@@ -216,6 +216,96 @@ def radial_box_mask(
     return _additive(valid, dtype)
 
 
+def frame_stride_diagonal_mask(
+    T: int,
+    H: int,
+    W: int,
+    *,
+    num_diagonals: int,
+    dtype: mx.Dtype = mx.float32,
+) -> mx.array:
+    """Multi-diagonal mask at frame-stride offsets (Sparse-vDiT M3).
+
+    Token at flat index `i` attends to token at flat index `j` iff
+    `(j - i)` is a multiple of the per-frame stride `H*W` in
+    `{-(k-1)*HW, ..., -HW, 0, HW, ..., (k-1)*HW}` where `k = num_diagonals`.
+    Captures the "multi-diagonal" head pattern from Sparse-vDiT
+    (Chen et al. 2025): same `(h, w)` across nearby frames.
+
+    Setting `num_diagonals=1` reduces to the main diagonal (self-attention
+    only). Setting `num_diagonals=T` is equivalent to ``temporal_only_mask``.
+
+    Args:
+        T: Number of frames.
+        H: Latent height.
+        W: Latent width.
+        num_diagonals: Strictly positive number of diagonal bands
+            (counting the main diagonal once).
+        dtype: Output dtype.
+
+    Returns:
+        Additive mask of shape `(1, 1, T*H*W, T*H*W)`.
+    """
+    _validate_thw(T, H, W)
+    if num_diagonals <= 0:
+        raise ValueError(f"num_diagonals must be positive, got {num_diagonals}")
+    S = T * H * W
+    HW = H * W
+    i = mx.arange(S).reshape(S, 1)
+    j = mx.arange(S).reshape(1, S)
+    offset = j - i
+    # Same (h, w) within a frame iff |offset| % HW == 0.
+    abs_off = mx.abs(offset)
+    on_band = mx.equal(mx.remainder(abs_off, HW), 0)
+    within_range = mx.less_equal(abs_off, (num_diagonals - 1) * HW)
+    valid = mx.logical_and(on_band, within_range)
+    return _additive(valid, dtype)
+
+
+def vertical_stripe_mask(
+    T: int,
+    H: int,
+    W: int,
+    *,
+    key_indices: mx.array,
+    dtype: mx.Dtype = mx.float32,
+) -> mx.array:
+    """Anchor-column mask (Sparse-vDiT M4).
+
+    Every query attends only to a fixed set of "sink" key tokens identified
+    by ``key_indices`` (flat indices into the T-major sequence). Captures
+    the "vertical-stripe" head pattern from Sparse-vDiT, where a small set
+    of anchor positions act as global memory.
+
+    The set must be non-empty and contain unique in-range indices. The
+    main diagonal is *not* added automatically — include it in
+    ``key_indices`` if self-attention is desired.
+
+    Args:
+        T: Number of frames.
+        H: Latent height.
+        W: Latent width.
+        key_indices: 1-D ``mx.array`` of int indices in `[0, T*H*W)`.
+        dtype: Output dtype.
+
+    Returns:
+        Additive mask of shape `(1, 1, T*H*W, T*H*W)`.
+    """
+    _validate_thw(T, H, W)
+    if key_indices.ndim != 1:
+        raise ValueError(f"key_indices must be 1-D, got shape {key_indices.shape}")
+    if key_indices.size == 0:
+        raise ValueError("key_indices must be non-empty")
+    S = T * H * W
+    keys = key_indices.astype(mx.int32)
+    if mx.any(mx.less(keys, 0)).item() or mx.any(mx.greater_equal(keys, S)).item():
+        raise ValueError(f"key_indices out of range [0, {S})")
+    valid_row = mx.zeros((S,), dtype=mx.bool_)
+    valid_row[keys] = mx.array(True)
+    valid = mx.broadcast_to(valid_row.reshape(1, S), (S, S))
+    return _additive(valid, dtype)
+
+
 def radial_gaussian_mask(
     T: int,
     H: int,
