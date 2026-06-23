@@ -37,7 +37,6 @@ jobs:
 
       - name: Type-check with ty
         run: ty check
-        continue-on-error: true
 
       - name: Run tests
         run: pytest tests/ -v --cov=mlx_arsenal --cov-report=term-missing
