@@ -55,3 +55,19 @@ ignore = ["N803", "N806"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ty.environment]
+# Pin to the minimum supported interpreter so checks match `requires-python`.
+python-version = "3.10"
+
+[tool.ty.terminal]
+# Strict mode: any warning-level diagnostic is a hard failure (non-zero exit).
+error-on-warning = true
+
+[tool.ty.rules]
+# Promote gradual-typing laxity to errors (these default to warn/ignore).
+redundant-cast = "error"
+unused-ignore-comment = "error"
+invalid-ignore-comment = "error"
+deprecated = "error"
+division-by-zero = "error"
