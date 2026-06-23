@@ -25,6 +25,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
+    "pytest-cov>=4.0",
     "ruff>=0.7.0",
     "pre-commit>=3.5",
     "ty>=0.0.0a1",
@@ -55,6 +56,10 @@ ignore = ["N803", "N806"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["mlx_arsenal"]
 
 [tool.ty.environment]
 # Pin to the minimum supported interpreter so checks match `requires-python`.
