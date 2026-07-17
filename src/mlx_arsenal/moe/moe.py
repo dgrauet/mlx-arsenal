@@ -91,12 +91,14 @@ class MoELayer(nn.Module):
         # expert_weights: (num_tokens, num_experts)
         num_experts = len(self.experts)
         num_tokens = hidden.shape[0]
-        expert_weights = mx.zeros((num_tokens, num_experts))
+        # Match the input dtype: default-fp32 zeros would silently promote
+        # the whole layer output to fp32 for fp16/bf16 models.
+        expert_weights = mx.zeros((num_tokens, num_experts), dtype=hidden.dtype)
         for k in range(indices.shape[1]):
             col_indices = indices[:, k : k + 1]  # (num_tokens, 1)
             col_weights = weights[:, k : k + 1]  # (num_tokens, 1)
             # One-hot for this top-k slot
-            one_hot = mx.zeros((num_tokens, num_experts))
+            one_hot = mx.zeros((num_tokens, num_experts), dtype=hidden.dtype)
             rows = mx.arange(num_tokens).reshape(-1, 1)
             one_hot[rows, col_indices] = col_weights
             expert_weights = expert_weights + one_hot

@@ -133,3 +133,22 @@ class TestMoELayer:
         x = mx.random.normal((1, 1, hidden))
         y = layer(x)
         assert y.shape == x.shape
+
+    def test_dtype_preserved_fp16(self):
+        """fp16 input stays fp16 through routing (no silent fp32 promotion).
+
+        Regression: the routing one-hot/accumulator buffers were created as
+        default-fp32 zeros, promoting the whole layer output to fp32 for
+        fp16 models (found via smeltr profiling of Hunyuan3D-2.1-mlx).
+        """
+        hidden = 32
+        layer = MoELayer(
+            hidden_size=hidden,
+            num_experts=4,
+            top_k=2,
+            expert_fn=self._make_expert_fn(hidden),
+        )
+        layer.set_dtype(mx.float16)
+        x = mx.random.normal((2, 5, hidden), dtype=mx.float16)
+        y = layer(x)
+        assert y.dtype == mx.float16
