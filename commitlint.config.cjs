@@ -14,5 +14,10 @@ module.exports = {
     // including manual `chore(deps):` updates that don't follow this
     // pattern.
     (message) => /^chore\(deps(-dev)?\):\s+[Bb]ump\s+/.test(message),
+    // release-please squash merges carry an auto-generated
+    // "Co-authored-by: <bot>[bot] <id+login@users.noreply...>" trailer
+    // that exceeds body-max-line-length (100). The commit is entirely
+    // machine-generated; exempt it.
+    (message) => /^chore\(main\): release /.test(message),
   ],
 };

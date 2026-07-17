@@ -79,6 +79,11 @@ jobs:
           path: dist/
 
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Both triggers (tag push + release published) fire since the
+          # release GitHub App was wired in; the loser of the publish race
+          # must no-op instead of failing on "400 File already exists".
+          skip-existing: true
 
   github-release:
     name: Create or update GitHub release
