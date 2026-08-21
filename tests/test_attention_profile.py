@@ -3,7 +3,7 @@
 import mlx.core as mx
 import pytest
 
-from mlx_arsenal._scalar import item_float
+from mlx_arsenal._typing import array_from_any, item_float
 from mlx_arsenal.attention import (
     Kind,
     classify,
@@ -54,10 +54,7 @@ class TestClassifyHeadsFromProbs:
             block_start = t * H * W
             block_end = (t + 1) * H * W
             mask[block_start:block_end, block_start:block_end] = 1.0 / (H * W)
-        # mlx's stubs match numpy arrays against a `DLPackCompatible` Protocol
-        # whose members are mutable attributes, which `np.ndarray` does not
-        # satisfy structurally (ml-explore/mlx#4371). Fine at runtime.
-        probs = mx.array(mask).reshape(1, 1, S, S)  # ty: ignore[invalid-argument-type]
+        probs = array_from_any(mask).reshape(1, 1, S, S)
         return mx.broadcast_to(probs, (1, nH, S, S))
 
     def _make_same_pos_probs(self, T: int, H: int, W: int, nH: int) -> mx.array:
@@ -71,7 +68,7 @@ class TestClassifyHeadsFromProbs:
             for tk in range(T):
                 k = tk * H * W + qh * W + qw
                 mask[q, k] = 1.0 / T
-        probs = mx.array(mask).reshape(1, 1, S, S)  # ty: ignore[invalid-argument-type]
+        probs = array_from_any(mask).reshape(1, 1, S, S)
         return mx.broadcast_to(probs, (1, nH, S, S))
 
     def test_shape(self):

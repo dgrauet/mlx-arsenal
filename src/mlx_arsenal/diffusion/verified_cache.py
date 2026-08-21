@@ -30,7 +30,7 @@ from collections import deque
 
 import mlx.core as mx
 
-from .._scalar import item_float
+from .._typing import item_float
 
 
 def geometric_threshold(

@@ -6,7 +6,7 @@ from typing import cast
 import mlx.core as mx
 import pytest
 
-from mlx_arsenal._scalar import item_float
+from mlx_arsenal._typing import item_float
 from mlx_arsenal.attention import (
     causal_mask,
     frame_stride_diagonal_mask,

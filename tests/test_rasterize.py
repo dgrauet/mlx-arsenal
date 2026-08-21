@@ -3,7 +3,7 @@
 import mlx.core as mx
 import pytest
 
-from mlx_arsenal._scalar import item_float, item_int
+from mlx_arsenal._typing import item_float, item_int
 from mlx_arsenal.rasterize import interpolate, rasterize_triangles
 
 

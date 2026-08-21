@@ -22,7 +22,7 @@ from collections.abc import Sequence
 
 import mlx.core as mx
 
-from .._scalar import item_float
+from .._typing import item_float
 
 
 class WindowResidualController:

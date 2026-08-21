@@ -2,7 +2,7 @@
 
 import mlx.core as mx
 
-from mlx_arsenal._scalar import item_float
+from mlx_arsenal._typing import array_from_any, item_float
 from mlx_arsenal.spatial import (
     PatchEmbed2d,
     PatchEmbed3d,
@@ -176,10 +176,7 @@ class TestPixelShufflePyTorchParity:
         arr = arr.reshape(b, oc, r, r, h, w)
         arr = arr.transpose(0, 1, 4, 2, 5, 3)
         arr = arr.reshape(b, oc, h * r, w * r)
-        # mlx's stubs match numpy arrays against a `DLPackCompatible` Protocol
-        # whose members are mutable attributes, which `np.ndarray` does not
-        # satisfy structurally (ml-explore/mlx#4371). Fine at runtime.
-        return mx.array(arr.transpose(0, 2, 3, 1))  # ty: ignore[invalid-argument-type]
+        return array_from_any(arr.transpose(0, 2, 3, 1))
 
     def test_shuffle_matches_pytorch(self):
         """Channel j of input must map to output channel j // (r*r) at subpixel (j//r%r, j%r)."""
@@ -190,7 +187,7 @@ class TestPixelShufflePyTorchParity:
         x_np = np.zeros((B, H, W, oc * r * r), dtype=np.float32)
         for j in range(oc * r * r):
             x_np[..., j] = j
-        x = mx.array(x_np)  # ty: ignore[invalid-argument-type]
+        x = array_from_any(x_np)
         out = pixel_shuffle(x, upscale_factor=r)
         expected = self._pt_shuffle_spec(x, r)
         assert mx.allclose(out, expected, atol=1e-6)
@@ -201,7 +198,7 @@ class TestPixelShufflePyTorchParity:
 
         r = 2
         x_np = np.random.default_rng(0).standard_normal((1, 8, 8, 3)).astype(np.float32)
-        x = mx.array(x_np)  # ty: ignore[invalid-argument-type]
+        x = array_from_any(x_np)
         down = pixel_unshuffle(x, downscale_factor=r)
         up = pixel_shuffle(down, upscale_factor=r)
         assert mx.allclose(x, up, atol=1e-6)

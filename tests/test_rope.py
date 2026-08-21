@@ -5,7 +5,7 @@ import math
 import mlx.core as mx
 import pytest
 
-from mlx_arsenal._scalar import item_float
+from mlx_arsenal._typing import item_float
 from mlx_arsenal.rope import (
     apply_rotary_emb,
     meshgrid_nd,

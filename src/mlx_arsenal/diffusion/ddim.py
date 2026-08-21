@@ -17,7 +17,7 @@ from typing import Literal
 
 import mlx.core as mx
 
-from .._scalar import item_int
+from .._typing import item_int
 
 __all__ = ["DDIMScheduler"]
 
