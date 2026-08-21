@@ -3,6 +3,7 @@
 import mlx.core as mx
 import pytest
 
+from mlx_arsenal._scalar import item_float
 from mlx_arsenal.attention import (
     Kind,
     classify,
@@ -53,7 +54,11 @@ class TestClassifyHeadsFromProbs:
             block_start = t * H * W
             block_end = (t + 1) * H * W
             mask[block_start:block_end, block_start:block_end] = 1.0 / (H * W)
-        return mx.broadcast_to(mx.array(mask).reshape(1, 1, S, S), (1, nH, S, S))
+        # mlx's stubs match numpy arrays against a `DLPackCompatible` Protocol
+        # whose members are mutable attributes, which `np.ndarray` does not
+        # satisfy structurally. The `mx.array(...)` calls here are fine at runtime.
+        probs = mx.array(mask).reshape(1, 1, S, S)  # ty: ignore[invalid-argument-type]
+        return mx.broadcast_to(probs, (1, nH, S, S))
 
     def _make_same_pos_probs(self, T: int, H: int, W: int, nH: int) -> mx.array:
         import numpy as np
@@ -66,7 +71,8 @@ class TestClassifyHeadsFromProbs:
             for tk in range(T):
                 k = tk * H * W + qh * W + qw
                 mask[q, k] = 1.0 / T
-        return mx.broadcast_to(mx.array(mask).reshape(1, 1, S, S), (1, nH, S, S))
+        probs = mx.array(mask).reshape(1, 1, S, S)  # ty: ignore[invalid-argument-type]
+        return mx.broadcast_to(probs, (1, nH, S, S))
 
     def test_shape(self):
         T, H, W = 2, 2, 2
@@ -146,7 +152,7 @@ class TestClassifyHeadsFromQK:
         k = mx.broadcast_to(k, (1, 2, S, D))
         scores = classify_heads_from_qk(q, k, T, H, W, n_samples=S)
         for h in range(2):
-            assert scores[h, 0].item() > 0.8
+            assert item_float(scores[h, 0]) > 0.8
 
     def test_validation(self):
         T, H, W = 2, 2, 2

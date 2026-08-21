@@ -24,10 +24,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    # mlx 0.32.0 dropped the bundled .pyi stubs (mlx/core/*.pyi) from the
-    # wheel, so `ty check` cannot resolve mlx.core. Constrain the dev env
-    # until upstream ships stubs again (runtime supports newer mlx fine).
-    "mlx<0.32",
+    # mlx 0.32.0 shipped without the bundled .pyi stubs (mlx/core/*.pyi), so
+    # `ty check` cannot resolve mlx.core there (ml-explore/mlx#3916). 0.32.1
+    # restores all 8 stubs; floor the dev env above the one broken release.
+    "mlx>=0.32.1",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "ruff>=0.7.0",

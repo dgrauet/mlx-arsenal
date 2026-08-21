@@ -17,6 +17,8 @@ from typing import Literal
 
 import mlx.core as mx
 
+from .._scalar import item_int
+
 __all__ = ["DDIMScheduler"]
 
 
@@ -162,7 +164,7 @@ class DDIMScheduler:
         Returns:
             The denoised sample for the previous timestep.
         """
-        t = int(timestep.item()) if isinstance(timestep, mx.array) else int(timestep)
+        t = item_int(timestep) if isinstance(timestep, mx.array) else int(timestep)
         prev_t = self._prev_timestep(t)
 
         alpha_prod_t = self.alphas_cumprod[t]
@@ -193,6 +195,6 @@ class DDIMScheduler:
         timestep: int | mx.array,
     ) -> mx.array:
         """Forward-diffuse ``original`` to noise level ``timestep``."""
-        t = int(timestep.item()) if isinstance(timestep, mx.array) else int(timestep)
+        t = item_int(timestep) if isinstance(timestep, mx.array) else int(timestep)
         alpha_prod_t = self.alphas_cumprod[t]
         return mx.sqrt(alpha_prod_t) * original + mx.sqrt(1.0 - alpha_prod_t) * noise

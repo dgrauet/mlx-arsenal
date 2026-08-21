@@ -6,6 +6,7 @@ from typing import cast
 import mlx.core as mx
 import pytest
 
+from mlx_arsenal._scalar import item_float, item_int
 from mlx_arsenal.diffusion import (
     DDIMScheduler,
     FlowMatchEulerDiscreteScheduler,
@@ -259,15 +260,15 @@ class TestDDIMScheduler:
     def test_zero_snr_makes_terminal_alpha_zero(self):
         sched = DDIMScheduler(rescale_betas_zero_snr=True)
         # After rescale the final alpha_cumprod should be ~0.
-        assert float(sched.alphas_cumprod[-1].item()) < 1e-5
+        assert item_float(sched.alphas_cumprod[-1]) < 1e-5
 
     def test_no_zero_snr_keeps_alphas_positive(self):
         sched = DDIMScheduler(rescale_betas_zero_snr=False)
-        assert float(sched.alphas_cumprod[-1].item()) > 0.0
+        assert item_float(sched.alphas_cumprod[-1]) > 0.0
 
     def test_set_alpha_to_one(self):
         sched = DDIMScheduler(set_alpha_to_one=True)
-        assert float(sched.final_alpha_cumprod.item()) == pytest.approx(1.0)
+        assert item_float(sched.final_alpha_cumprod) == pytest.approx(1.0)
 
     def test_step_shape_preserved(self):
         sched = DDIMScheduler(num_inference_steps=4)
@@ -280,7 +281,7 @@ class TestDDIMScheduler:
         sched = DDIMScheduler(num_inference_steps=4)
         sample = mx.zeros((1, 4))
         model_out = mx.ones((1, 4))
-        as_int = sched.step(model_out, int(sched.timesteps[0].item()), sample)
+        as_int = sched.step(model_out, item_int(sched.timesteps[0]), sample)
         as_arr = sched.step(model_out, sched.timesteps[0], sample)
         assert mx.allclose(as_int, as_arr).item()
 
@@ -296,7 +297,7 @@ class TestDDIMScheduler:
         t = sched.timesteps[0]
         out = sched.step(eps, t, sample)
 
-        t_int = int(t.item())
+        t_int = item_int(t)
         prev_t = sched._prev_timestep(t_int)
         alpha_t = sched.alphas_cumprod[t_int]
         alpha_prev = sched.alphas_cumprod[prev_t] if prev_t >= 0 else sched.final_alpha_cumprod
@@ -323,7 +324,7 @@ class TestDDIMScheduler:
         eps = mx.zeros((1, 4))
         out = sched.step(eps, sched.timesteps[0], sample)
         # With clipping, magnitude is bounded by sqrt(alpha_prev) * 1
-        assert float(mx.max(mx.abs(out)).item()) <= 1.0
+        assert item_float(mx.max(mx.abs(out))) <= 1.0
 
     def test_add_noise_at_zero_returns_sample(self):
         """At the lowest timestep (alpha≈1), add_noise ≈ original."""

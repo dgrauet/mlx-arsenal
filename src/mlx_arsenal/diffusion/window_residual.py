@@ -22,6 +22,8 @@ from collections.abc import Sequence
 
 import mlx.core as mx
 
+from .._scalar import item_float
+
 
 class WindowResidualController:
     """Step-aware controller for the WA-RS residual cache.
@@ -107,7 +109,7 @@ class WindowResidualController:
     def _adaptive_decision(self, is_boundary: bool, attn_input: mx.array | None) -> bool:
         if attn_input is None:
             raise RuntimeError("adaptive mode requires attn_input on every should_refresh call")
-        new_summary = float(mx.mean(mx.abs(attn_input)).item())
+        new_summary = item_float(mx.mean(mx.abs(attn_input)))
         if is_boundary:
             self._prev_input = attn_input
             self._prev_summary = new_summary
@@ -123,7 +125,7 @@ class WindowResidualController:
             self._prev_input = attn_input
             self._prev_summary = new_summary
             return True
-        delta = float(mx.mean(mx.abs(attn_input - prev)).item()) / prev_summary
+        delta = item_float(mx.mean(mx.abs(attn_input - prev))) / prev_summary
         self._prev_input = attn_input
         self._prev_summary = new_summary
         return delta >= self._rel_l1_thresh

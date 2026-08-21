@@ -3,6 +3,7 @@
 import mlx.core as mx
 import pytest
 
+from mlx_arsenal._scalar import item_float, item_int
 from mlx_arsenal.rasterize import interpolate, rasterize_triangles
 
 
@@ -39,7 +40,7 @@ class TestSingleTriangle:
         mx.synchronize()
         assert fi.shape == (self.height, self.width)
         assert bary.shape == (self.height, self.width, 3)
-        assert (fi > 0).astype(mx.int32).sum().item() > 0
+        assert item_int((fi > 0).astype(mx.int32).sum()) > 0
 
     def test_face_indices_nonzero(self):
         fi, bary = rasterize_triangles(self.vertices, self.faces, self.width, self.height)
@@ -47,7 +48,7 @@ class TestSingleTriangle:
         assert fi.shape == (self.height, self.width)
         assert bary.shape == (self.height, self.width, 3)
 
-        covered = (fi > 0).astype(mx.int32).sum().item()
+        covered = item_int((fi > 0).astype(mx.int32).sum())
         assert covered > 0, "No pixels covered by the triangle"
 
     def test_barycentric_sum_to_one(self):
@@ -63,7 +64,7 @@ class TestSingleTriangle:
         # For covered pixels: |bary_sum - 1| < atol
         # For background: bary_sum = 0 (don't care)
         error = mx.abs(bary_sum - 1.0) * covered_mask
-        max_error = error.max().item()
+        max_error = item_float(error.max())
         assert max_error < 1e-4, f"Max bary sum error on covered pixels: {max_error}"
 
     def test_background_is_zero(self):
@@ -100,7 +101,7 @@ class TestTwoOverlappingTriangles:
         mx.synchronize()
 
         covered_mask = fi > 0
-        num_covered = covered_mask.astype(mx.int32).sum().item()
+        num_covered = item_int(covered_mask.astype(mx.int32).sum())
         assert num_covered > 0, "No covered pixels"
 
         # All covered pixels should show face 1 (1-indexed for face 0)
@@ -144,7 +145,7 @@ class TestCubeMesh:
         fi, bary = rasterize_triangles(vertices, faces, w, h)
         mx.synchronize()
 
-        covered = (fi > 0).astype(mx.int32).sum().item()
+        covered = item_int((fi > 0).astype(mx.int32).sum())
         total = w * h
         assert covered > total * 0.1, f"Too few covered pixels: {covered}/{total}"
         assert covered < total * 0.95, f"Too many covered pixels: {covered}/{total}"
@@ -180,7 +181,7 @@ class TestInterpolation:
         # For covered pixels, interpolated RGB should sum to ~1
         color_sums = result.sum(axis=-1)  # (H, W)
         error = mx.abs(color_sums - 1.0) * covered_mask
-        max_error = error.max().item()
+        max_error = item_float(error.max())
         assert max_error < 1e-3, f"Interpolated colors max error: {max_error}"
 
 
@@ -205,7 +206,7 @@ class TestPerspectiveCorrection:
 
         bary_sum = bary.sum(axis=-1)
         error = mx.abs(bary_sum - 1.0) * covered_mask
-        max_error = error.max().item()
+        max_error = item_float(error.max())
         assert max_error < 1e-3, f"Perspective bary sum error: {max_error}"
 
 
@@ -224,7 +225,7 @@ class TestEdgeCases:
         fi, bary = rasterize_triangles(vertices, faces, w, h)
         mx.synchronize()
 
-        covered = (fi > 0).astype(mx.int32).sum().item()
+        covered = item_int((fi > 0).astype(mx.int32).sum())
         assert covered == 0, "Degenerate triangle should not cover any pixels"
 
     def test_triangle_outside_viewport(self):
@@ -241,7 +242,7 @@ class TestEdgeCases:
         fi, bary = rasterize_triangles(vertices, faces, w, h)
         mx.synchronize()
 
-        covered = (fi > 0).astype(mx.int32).sum().item()
+        covered = item_int((fi > 0).astype(mx.int32).sum())
         assert covered == 0, "Out-of-viewport triangle should not cover any pixels"
 
 

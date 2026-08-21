@@ -30,6 +30,8 @@ from collections import deque
 
 import mlx.core as mx
 
+from .._scalar import item_float
+
 
 def geometric_threshold(
     step_index: int,
@@ -169,8 +171,8 @@ class VerifiedFeatureCache:
         ``e = ‖predicted − actual‖²₂ / (‖actual‖²₂ + ε)``.
         Returns ``True`` if ``e <= threshold(step_index)``.
         """
-        diff_sq = mx.sum((predicted - actual) ** 2).item()
-        actual_sq = mx.sum(actual**2).item()
+        diff_sq = item_float(mx.sum((predicted - actual) ** 2))
+        actual_sq = item_float(mx.sum(actual**2))
         error = diff_sq / (actual_sq + self.epsilon)
         return error <= self.threshold(step_index)
 

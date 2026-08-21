@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import mlx.core as mx
 
+from .._scalar import item_float
+
 
 class PerLayerAttentionCache:
     """Stateful per-layer attention output cache."""
@@ -52,7 +54,7 @@ class PerLayerAttentionCache:
         self._check_step(step_index)
         if step_index == 0 or step_index == self.num_steps - 1:
             self._prev_input = attn_input
-            self._prev_summary = float(mx.mean(mx.abs(attn_input)).item())
+            self._prev_summary = item_float(mx.mean(mx.abs(attn_input)))
             return True
         prev = self._prev_input
         prev_summary = self._prev_summary
@@ -63,11 +65,11 @@ class PerLayerAttentionCache:
             )
         if prev_summary == 0.0:
             self._prev_input = attn_input
-            self._prev_summary = float(mx.mean(mx.abs(attn_input)).item())
+            self._prev_summary = item_float(mx.mean(mx.abs(attn_input)))
             return True
-        delta = float(mx.mean(mx.abs(attn_input - prev)).item()) / prev_summary
+        delta = item_float(mx.mean(mx.abs(attn_input - prev))) / prev_summary
         self._prev_input = attn_input
-        self._prev_summary = float(mx.mean(mx.abs(attn_input)).item())
+        self._prev_summary = item_float(mx.mean(mx.abs(attn_input)))
         return delta >= self.rel_l1_thresh
 
     def should_compute_from_summary(self, step_index: int, summary: float) -> bool:
