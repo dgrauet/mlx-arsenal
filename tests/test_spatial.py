@@ -178,7 +178,7 @@ class TestPixelShufflePyTorchParity:
         arr = arr.reshape(b, oc, h * r, w * r)
         # mlx's stubs match numpy arrays against a `DLPackCompatible` Protocol
         # whose members are mutable attributes, which `np.ndarray` does not
-        # satisfy structurally. The `mx.array(...)` calls here are fine at runtime.
+        # satisfy structurally (ml-explore/mlx#4371). Fine at runtime.
         return mx.array(arr.transpose(0, 2, 3, 1))  # ty: ignore[invalid-argument-type]
 
     def test_shuffle_matches_pytorch(self):

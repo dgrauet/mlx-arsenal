@@ -56,7 +56,7 @@ class TestClassifyHeadsFromProbs:
             mask[block_start:block_end, block_start:block_end] = 1.0 / (H * W)
         # mlx's stubs match numpy arrays against a `DLPackCompatible` Protocol
         # whose members are mutable attributes, which `np.ndarray` does not
-        # satisfy structurally. The `mx.array(...)` calls here are fine at runtime.
+        # satisfy structurally (ml-explore/mlx#4371). Fine at runtime.
         probs = mx.array(mask).reshape(1, 1, S, S)  # ty: ignore[invalid-argument-type]
         return mx.broadcast_to(probs, (1, nH, S, S))
 
