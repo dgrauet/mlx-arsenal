@@ -6,6 +6,7 @@ from typing import cast
 import mlx.core as mx
 import pytest
 
+from mlx_arsenal._typing import item_float
 from mlx_arsenal.attention import (
     causal_mask,
     frame_stride_diagonal_mask,
@@ -365,7 +366,7 @@ class TestVerticalStripeMask:
         m = vertical_stripe_mask(T=2, H=2, W=2, key_indices=mx.array([4]))[0, 0]
         # Only column 4 is open for every row.
         assert m[0, 4].item() == 0.0
-        assert math.isinf(m[0, 0].item())
+        assert math.isinf(item_float(m[0, 0]))
 
     def test_dtype(self):
         m = vertical_stripe_mask(T=2, H=2, W=2, key_indices=mx.array([0]), dtype=mx.float16)

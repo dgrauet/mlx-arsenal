@@ -5,6 +5,7 @@ import math
 import mlx.core as mx
 import pytest
 
+from mlx_arsenal._typing import item_float
 from mlx_arsenal.rope import (
     apply_rotary_emb,
     meshgrid_nd,
@@ -34,7 +35,7 @@ class TestRopeFrequencies1D:
         cos, sin = rope_frequencies_1d(dim=64, positions=mx.array([1.0]))
         # Index 0 should rotate fastest, last index slowest.
         # |sin[0]| > |sin[-1]|.
-        assert abs(float(sin[0, 0].item())) > abs(float(sin[0, -1].item()))
+        assert abs(item_float(sin[0, 0])) > abs(item_float(sin[0, -1]))
 
     def test_theta_rescale_increases_period(self):
         """Rescaling theta upward should slow the rotation."""
@@ -44,7 +45,7 @@ class TestRopeFrequencies1D:
             dim=8, positions=pos, theta=10000.0, theta_rescale_factor=4.0
         )
         # Rescaled → smaller angles → smaller sin magnitudes.
-        assert float(mx.abs(sin_rescaled).sum().item()) < float(mx.abs(sin_default).sum().item())
+        assert item_float(mx.abs(sin_rescaled).sum()) < item_float(mx.abs(sin_default).sum())
 
     def test_interpolation_factor_scales_positions(self):
         """interpolation_factor=2 ≡ doubling all positions."""
@@ -224,7 +225,7 @@ class TestRoPECrossAttentionSemantics:
         q_at_0 = apply_rotary_emb(q_same[None, :, :], cos[:1], sin[:1])
         q_at_5 = apply_rotary_emb(q_same[None, :, :], cos[1:], sin[1:])
 
-        dot_0 = float((q_at_0 * q_same[None, :, :]).sum().item())
-        dot_5 = float((q_at_5 * q_same[None, :, :]).sum().item())
+        dot_0 = item_float((q_at_0 * q_same[None, :, :]).sum())
+        dot_5 = item_float((q_at_5 * q_same[None, :, :]).sum())
         # The two dot products should differ — RoPE encoded position.
         assert abs(dot_0 - dot_5) > 1e-3

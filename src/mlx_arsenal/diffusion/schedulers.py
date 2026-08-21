@@ -7,6 +7,8 @@ import math
 import mlx.core as mx
 import numpy as np
 
+from .._typing import array_from_any
+
 
 def get_sampling_sigmas(num_steps: int, shift: float = 1.0) -> list[float]:
     """Flow-matching sigma schedule: linspace(1, 0, steps+1) with optional shift.
@@ -130,8 +132,8 @@ class FlowMatchEulerDiscreteScheduler:
         sigmas = self.shift * sigmas / (1.0 + (self.shift - 1.0) * sigmas)
         timesteps = sigmas * self.num_train_timesteps
 
-        self.timesteps = mx.array(timesteps, dtype=mx.float32)
-        self.sigmas = mx.array(
+        self.timesteps = array_from_any(timesteps, dtype=mx.float32)
+        self.sigmas = array_from_any(
             np.concatenate([sigmas, np.ones(1, dtype=np.float32)]), dtype=mx.float32
         )
         self.num_inference_steps = num_inference_steps

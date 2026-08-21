@@ -3,6 +3,7 @@
 import mlx.core as mx
 import pytest
 
+from mlx_arsenal._typing import array_from_any, item_float
 from mlx_arsenal.attention import (
     Kind,
     classify,
@@ -53,7 +54,8 @@ class TestClassifyHeadsFromProbs:
             block_start = t * H * W
             block_end = (t + 1) * H * W
             mask[block_start:block_end, block_start:block_end] = 1.0 / (H * W)
-        return mx.broadcast_to(mx.array(mask).reshape(1, 1, S, S), (1, nH, S, S))
+        probs = array_from_any(mask).reshape(1, 1, S, S)
+        return mx.broadcast_to(probs, (1, nH, S, S))
 
     def _make_same_pos_probs(self, T: int, H: int, W: int, nH: int) -> mx.array:
         import numpy as np
@@ -66,7 +68,8 @@ class TestClassifyHeadsFromProbs:
             for tk in range(T):
                 k = tk * H * W + qh * W + qw
                 mask[q, k] = 1.0 / T
-        return mx.broadcast_to(mx.array(mask).reshape(1, 1, S, S), (1, nH, S, S))
+        probs = array_from_any(mask).reshape(1, 1, S, S)
+        return mx.broadcast_to(probs, (1, nH, S, S))
 
     def test_shape(self):
         T, H, W = 2, 2, 2
@@ -146,7 +149,7 @@ class TestClassifyHeadsFromQK:
         k = mx.broadcast_to(k, (1, 2, S, D))
         scores = classify_heads_from_qk(q, k, T, H, W, n_samples=S)
         for h in range(2):
-            assert scores[h, 0].item() > 0.8
+            assert item_float(scores[h, 0]) > 0.8
 
     def test_validation(self):
         T, H, W = 2, 2, 2
