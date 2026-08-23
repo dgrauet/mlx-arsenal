@@ -4,10 +4,16 @@ import numpy as np
 from mlx_arsenal._typing import array_from_any
 from mlx_arsenal.rasterize import rasterize_triangles
 from mlx_arsenal.rasterize._fixedpoint import to_screen
-from tests.rasterize_oracle import coverage_count
+from tests.rasterize_oracle import rasterize_reference
+
+# Deliberately not a multiple of the RASTER_TILE (16) sub-tile size or of the
+# 32/64 binning tile sizes exercised below, so the right and bottom edges
+# always fall inside a partial tile — the exact place a binning or mapping
+# bug hides from dimensions that divide evenly.
+PARTIAL_TILE_WIDTH, PARTIAL_TILE_HEIGHT = 100, 76
 
 
-def _quad_mesh(n, seed=0):
+def _quad_mesh(n: int, seed: int = 0) -> tuple[mx.array, mx.array]:
     rng = np.random.default_rng(seed)
     g = np.linspace(-0.9, 0.9, n + 1)
     xs, ys = np.meshgrid(g, g)
@@ -36,30 +42,51 @@ class TestWatertightness:
         interior = covered[rows[1] : rows[-1], cols[1] : cols[-1]]
         assert interior.all(), f"{(~interior).sum()} hole pixels inside the mesh"
 
-    def test_every_pixel_claimed_exactly_once(self):
+    def test_matches_oracle_on_partial_tiles(self):
+        """The shipped pipeline's face indices must equal the independent oracle's,
+        exactly, on a shared-edge grid at dimensions that leave partial tiles at
+        the right and bottom edges.
+
+        This is a property of `rasterize_triangles` itself (not of the oracle in
+        isolation): any binning/claiming bug — including one confined to a
+        partial tile — shows up as a face-index mismatch here.
+        """
         v, f = _quad_mesh(8)
-        verts_fx, _ = to_screen(v, 128, 128)
-        counts = coverage_count(
+        width, height = PARTIAL_TILE_WIDTH, PARTIAL_TILE_HEIGHT
+        fi, _ = rasterize_triangles(v, f, width, height)
+        verts_fx, verts_zw = to_screen(v, width, height)
+        ref_fi, _, _ = rasterize_reference(
             np.array(verts_fx.tolist(), dtype=np.int64),
+            np.array(verts_zw.tolist(), dtype=np.float64),
             np.array(f.tolist(), dtype=np.int64),
-            128,
-            128,
+            width,
+            height,
         )
-        assert counts.max() <= 1, "a pixel is claimed by more than one face"
+        covered = int((ref_fi > 0).sum())
+        assert covered > 0, "test proves nothing if no pixel is covered"
+        np.testing.assert_array_equal(np.array(fi.tolist()), ref_fi)
 
 
 class TestTileSizeInvariance:
     def test_identical_across_tile_sizes(self):
         v, f = _quad_mesh(10)
-        ref_fi, ref_bary = rasterize_triangles(v, f, 128, 128, _tile_size=16)
+        width, height = PARTIAL_TILE_WIDTH, PARTIAL_TILE_HEIGHT
+        ref_fi, ref_bary = rasterize_triangles(v, f, width, height, _tile_size=16)
+        assert (
+            int((np.array(ref_fi.tolist()) > 0).sum()) > 0
+        ), "test proves nothing if no pixel is covered"
         for ts in (32, 64):
-            fi, bary = rasterize_triangles(v, f, 128, 128, _tile_size=ts)
+            fi, bary = rasterize_triangles(v, f, width, height, _tile_size=ts)
             assert bool(mx.array_equal(fi, ref_fi).item()), f"tile size {ts}"
             assert bool(mx.array_equal(bary, ref_bary).item()), f"tile size {ts}"
 
 
 class TestDeterminism:
     def test_repeated_runs_are_identical(self):
+        """Proves determinism across repeated calls within one process — catches
+        uninitialised memory and unordered reductions — but not process-level
+        state such as first-call compile-cache population.
+        """
         v, f = _quad_mesh(6)
         a_fi, a_bary = rasterize_triangles(v, f, 64, 64)
         for _ in range(3):
