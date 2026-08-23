@@ -1,10 +1,13 @@
 """Tests for the Metal triangle rasterizer."""
 
 import mlx.core as mx
+import numpy as np
 import pytest
 
 from mlx_arsenal._typing import item_float, item_int
 from mlx_arsenal.rasterize import interpolate, rasterize_triangles
+from mlx_arsenal.rasterize._fixedpoint import to_screen
+from tests.rasterize_oracle import rasterize_reference
 
 
 def _clip_vertex(x, y, z, w=1.0):
@@ -149,6 +152,23 @@ class TestCubeMesh:
         total = w * h
         assert covered > total * 0.1, f"Too few covered pixels: {covered}/{total}"
         assert covered < total * 0.95, f"Too many covered pixels: {covered}/{total}"
+
+        # Each cube face is two triangles sharing a diagonal edge, which is
+        # exactly where the top-left fill rule (as opposed to the old
+        # kernel's inclusive-on-both-sides test) decides ownership of the
+        # shared pixels. The loose bounds above happen not to move under
+        # that rule for this mesh (both give 144/1024 covered), so pin the
+        # shipped pipeline to the independent oracle's exact face indices —
+        # not just its count — to actually exercise the rule.
+        verts_fx, verts_zw = to_screen(vertices, w, h)
+        ref_fi, _, _ = rasterize_reference(
+            np.array(verts_fx.tolist(), dtype=np.int64),
+            np.array(verts_zw.tolist(), dtype=np.float64),
+            np.array(faces.tolist(), dtype=np.int64),
+            w,
+            h,
+        )
+        np.testing.assert_array_equal(np.array(fi.tolist()), ref_fi)
 
 
 class TestInterpolation:
@@ -361,6 +381,31 @@ class TestPublicApi:
         v, f = _tri()
         # Should not raise.
         rasterize_triangles(v, f, 32, 32)
+
+
+@pytest.mark.slow
+def test_large_mesh_completes():
+    """1024^2 with a dense mesh used to abort on the GPU watchdog."""
+    from mlx_arsenal._typing import array_from_any
+
+    n = 512
+    g = np.linspace(-0.9, 0.9, n + 1)
+    xs, ys = np.meshgrid(g, g)
+    zs = np.random.default_rng(0).uniform(0.1, 0.9, size=xs.shape)
+    verts = array_from_any(
+        np.stack([xs.ravel(), ys.ravel(), zs.ravel(), np.ones(xs.size)], axis=1).astype(np.float32)
+    )
+    idx = np.arange((n + 1) ** 2).reshape(n + 1, n + 1)
+    tl, tr = idx[:-1, :-1].ravel(), idx[:-1, 1:].ravel()
+    bl, br = idx[1:, :-1].ravel(), idx[1:, 1:].ravel()
+    faces = array_from_any(
+        np.concatenate(
+            [np.stack([tl, bl, tr], axis=1), np.stack([tr, bl, br], axis=1)], axis=0
+        ).astype(np.int32)
+    )
+    fi, bary = rasterize_triangles(verts, faces, 1024, 1024)
+    mx.eval(fi, bary)
+    assert item_int(mx.sum((fi > 0).astype(mx.int32))) > 0
 
 
 if __name__ == "__main__":

@@ -60,6 +60,8 @@ ignore = ["N803", "N806"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: long-running GPU tests, deselected by default"]
+addopts = "-m 'not slow'"
 
 [tool.coverage.run]
 branch = true
