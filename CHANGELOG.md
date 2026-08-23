@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0](https://github.com/dgrauet/mlx-arsenal/compare/v0.10.1...v0.11.0) (2026-08-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* **rasterize:** triangle coverage at boundary pixels changes. The previous kernel dilated its bounding box by one pixel on one side only and used a barycentric test inclusive on both sides, so both triangles claimed a pixel on a shared edge and the depth test arbitrated. Coverage is now exact and watertight under the top-left fill rule, which fixes cracks along shared edges but shifts which face owns some boundary pixels. Golden images and any reference renders pinned against previous releases must be regenerated.
+
+### Features
+
+* **rasterize:** tile-binned rasterizer with exact fixed-point coverage ([#55](https://github.com/dgrauet/mlx-arsenal/issues/55)) ([4ac5eac](https://github.com/dgrauet/mlx-arsenal/commit/4ac5eacf48113127b3810b906675719c30a474b2))
+
 ## [0.10.1](https://github.com/dgrauet/mlx-arsenal/compare/v0.10.0...v0.10.1) (2026-07-17)
 
 
