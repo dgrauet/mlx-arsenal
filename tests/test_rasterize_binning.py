@@ -2,7 +2,14 @@ import mlx.core as mx
 import pytest
 
 from mlx_arsenal._typing import item_int
-from mlx_arsenal.rasterize._binning import _floor_div_pow2, _shift_amount, face_spans, signed_area
+from mlx_arsenal.rasterize._binning import (
+    MAX_PAIRS,
+    _floor_div_pow2,
+    _shift_amount,
+    choose_tiling,
+    face_spans,
+    signed_area,
+)
 
 S = 16
 
@@ -111,3 +118,36 @@ class TestShiftAmount:
     def test_non_positive_raises(self):
         with pytest.raises(ValueError, match="power-of-two"):
             _shift_amount(0)
+
+
+class TestChooseTiling:
+    def test_picks_finest_tiling_when_it_fits(self):
+        verts = _fx([(1.0, 1.0), (3.0, 1.0), (1.0, 3.0)])
+        faces = mx.array([[0, 1, 2]], dtype=mx.int32)
+        ts, _, _, pairs = choose_tiling(verts, faces, 64, 64, "none")
+        assert ts == 16
+        assert pairs == 1
+
+    def test_respects_explicit_tile_size(self):
+        verts = _fx([(0.0, 0.0), (40.0, 0.0), (0.0, 40.0)])
+        faces = mx.array([[0, 1, 2]], dtype=mx.int32)
+        ts, _, _, pairs = choose_tiling(verts, faces, 64, 64, "none", tile_size=32)
+        assert ts == 32
+        assert pairs == 4
+
+    def test_zero_pairs_when_everything_excluded(self):
+        verts = _fx([(0.0, 0.0), (2.0, 2.0), (4.0, 4.0)])
+        faces = mx.array([[0, 1, 2]], dtype=mx.int32)
+        ts, _, _, pairs = choose_tiling(verts, faces, 64, 64, "none")
+        assert pairs == 0
+        assert ts == 16
+
+    def test_raises_when_budget_exceeded(self, monkeypatch):
+        monkeypatch.setattr("mlx_arsenal.rasterize._binning.MAX_PAIRS", 4)
+        verts = _fx([(0.0, 0.0), (4000.0, 0.0), (0.0, 4000.0)])
+        faces = mx.array([[0, 1, 2]], dtype=mx.int32)
+        with pytest.raises(MemoryError, match="tile"):
+            choose_tiling(verts, faces, 4096, 4096, "none")
+
+    def test_budget_constant_matches_spec(self):
+        assert MAX_PAIRS == 32 * 1024 * 1024

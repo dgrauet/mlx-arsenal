@@ -8,9 +8,14 @@ from __future__ import annotations
 
 import mlx.core as mx
 
+from mlx_arsenal._typing import item_int
+
 from ._fixedpoint import SUBPIXEL_BITS, SUBPIXEL_SCALE
 
-__all__ = ["face_spans", "signed_area"]
+__all__ = ["MAX_PAIRS", "TILE_SIZES", "choose_tiling", "face_spans", "signed_area"]
+
+MAX_PAIRS = 32 * 1024 * 1024  # 256 MB of int64 keys
+TILE_SIZES = (16, 32, 64)
 
 
 def _shift_amount(n: int) -> int:
@@ -113,3 +118,45 @@ def face_spans(
     span = t1 - t0 + 1  # (F, 2)
     n_tiles = (span[:, 0] * span[:, 1] * keep.astype(mx.int32)).astype(mx.int32)
     return tile_bounds, n_tiles
+
+
+def choose_tiling(
+    verts_fx: mx.array,
+    faces: mx.array,
+    width: int,
+    height: int,
+    cull: str,
+    tile_size: int | None = None,
+) -> tuple[int, mx.array, mx.array, int]:
+    """Pick the finest tiling whose (tile, face) pair list fits the budget.
+
+    Reading ``total_pairs`` back to the host is what sizes the pair buffer, so
+    this is the pipeline's mandatory synchronization point.
+
+    Args:
+        verts_fx: (N, 2) int32 fixed-point screen coordinates.
+        faces: (F, 3) int32 vertex indices.
+        width: Image width in pixels.
+        height: Image height in pixels.
+        cull: One of ``"none"``, ``"back"``, ``"front"``.
+        tile_size: Force a tile size instead of choosing one. Test hook.
+
+    Returns:
+        ``(tile_size, tile_bounds, n_tiles, total_pairs)``.
+
+    Raises:
+        MemoryError: if even the coarsest tiling exceeds the budget.
+    """
+    candidates = (tile_size,) if tile_size is not None else TILE_SIZES
+    last = 0
+    for ts in candidates:
+        bounds, n = face_spans(verts_fx, faces, width, height, ts, cull)
+        total = item_int(mx.sum(n))
+        if tile_size is not None or total <= MAX_PAIRS:
+            return ts, bounds, n, total
+        last = total
+    raise MemoryError(
+        f"rasterize: {last} (tile, face) pairs at tile size {TILE_SIZES[-1]} "
+        f"exceeds the {MAX_PAIRS} pair budget. The mesh has faces spanning a "
+        f"large share of the image; reduce the face count or the resolution."
+    )
