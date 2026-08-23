@@ -1,10 +1,11 @@
 import mlx.core as mx
 import numpy as np
+import pytest
 
 from mlx_arsenal._typing import array_from_any, item_float, item_int
 from mlx_arsenal.rasterize._binning import build_tile_lists, choose_tiling
 from mlx_arsenal.rasterize._fixedpoint import to_screen
-from mlx_arsenal.rasterize._tile_raster import raster_tiles
+from mlx_arsenal.rasterize._tile_raster import RASTER_TILE, raster_tiles
 from tests.rasterize_oracle import rasterize_reference
 
 
@@ -137,3 +138,36 @@ class TestDepthPrior:
         prior = mx.full((32, 32), 1.0, dtype=mx.float32)
         fi, _, _ = raster_tiles(verts_fx, verts_zw, f, sf, starts, 32, 32, ts, prior, 1e-6)
         assert item_int(mx.sum(fi)) == 0
+
+
+class TestValidation:
+    """The kernel's caller invariants, which it cannot check for itself."""
+
+    def _setup(self, width=32, height=32):
+        v = mx.array(
+            [[-0.5, -0.5, 0.5, 1.0], [0.5, -0.5, 0.5, 1.0], [-0.5, 0.5, 0.5, 1.0]],
+            dtype=mx.float32,
+        )
+        f = mx.array([[0, 1, 2]], dtype=mx.int32)
+        verts_fx, verts_zw = to_screen(v, width, height)
+        ts, bounds, n, total = choose_tiling(
+            verts_fx, f, width, height, "none", tile_size=RASTER_TILE
+        )
+        tiles = ((width + ts - 1) // ts, (height + ts - 1) // ts)
+        sf, starts = build_tile_lists(bounds, n, total, tiles[0], tiles[1], 1)
+        return verts_fx, verts_zw, f, sf, starts
+
+    def test_sub_raster_tile_size_rejected(self):
+        """8 is a power of two, so ``choose_tiling`` accepts it — but a 16x16
+        sub-tile would straddle four binning tiles, making ``lo``/``hi``
+        non-uniform across the threadgroup."""
+        verts_fx, verts_zw, f, sf, starts = self._setup()
+        with pytest.raises(ValueError, match="multiple of 16"):
+            raster_tiles(verts_fx, verts_zw, f, sf, starts, 32, 32, 8, None, 1e-6)
+
+    def test_mismatched_tile_starts_rejected(self):
+        """``tile_starts`` built at one tile size, rasterized at another: the
+        recomputed ``tiles_x`` would not match the array's layout."""
+        verts_fx, verts_zw, f, sf, starts = self._setup()  # 2x2 tiles + 1 = 5 entries
+        with pytest.raises(ValueError, match="tile_starts does not match"):
+            raster_tiles(verts_fx, verts_zw, f, sf, starts, 32, 32, 32, None, 1e-6)

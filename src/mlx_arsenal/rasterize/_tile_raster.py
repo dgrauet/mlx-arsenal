@@ -189,15 +189,43 @@ def raster_tiles(
         tile_starts: (T + 1,) int32 offsets into ``sorted_faces``.
         width: Image width in pixels.
         height: Image height in pixels.
-        tile_size: Binning tile edge in pixels.
+        tile_size: Binning tile edge in pixels. Must be a multiple of
+            :data:`RASTER_TILE`, and must be the same value ``tile_starts`` was
+            built with.
         depth_prior: Optional (H, W) float32 depth map for occlusion culling.
+            Expected in **NDC z** (pre-mapping): it is mapped internally the
+            same way :func:`~mlx_arsenal.rasterize._fixedpoint.to_screen` maps
+            vertex z. The returned ``depth`` is already **post-mapping**, so the
+            two are not interchangeable — feeding a returned depth map straight
+            back in as a prior double-maps it and culls the wrong geometry.
+            Convert it back to NDC first.
         occlusion_truncation: Depth threshold for occlusion.
 
     Returns:
         ``(face_indices, barycentric, depth)`` shaped (H, W), (H, W, 3), (H, W).
+        ``depth`` is in mapped (post-``to_screen``) space; see ``depth_prior``.
+
+    Raises:
+        ValueError: if ``tile_size`` is not a multiple of :data:`RASTER_TILE`,
+            or if ``tile_starts`` does not match ``tile_size`` and the image
+            dimensions.
     """
+    # A threadgroup covers one RASTER_TILE-square sub-tile and reads a single
+    # binning tile's face list, so every pixel in it must land in the same
+    # binning tile: `lo`/`hi` have to be threadgroup-uniform or the
+    # `threadgroup_barrier` calls sit in divergent control flow.
+    if tile_size % RASTER_TILE != 0:
+        raise ValueError(f"tile_size must be a multiple of {RASTER_TILE}, got {tile_size}")
+
     sub_x = (width + RASTER_TILE - 1) // RASTER_TILE
     tiles_x = (width + tile_size - 1) // tile_size
+    tiles_y = (height + tile_size - 1) // tile_size
+    if tile_starts.size != tiles_x * tiles_y + 1:
+        raise ValueError(
+            f"tile_starts does not match tile_size / image dimensions: got "
+            f"{tile_starts.size} entries, expected {tiles_x * tiles_y + 1} for a "
+            f"{width}x{height} image at tile_size {tile_size}"
+        )
     num_sub = sub_x * ((height + RASTER_TILE - 1) // RASTER_TILE)
 
     prior = (
