@@ -53,8 +53,11 @@ def to_screen(vertices: mx.array, width: int, height: int) -> tuple[mx.array, mx
     # guard in rasterize_triangles, but a NaN rounds and casts to fixed-point
     # 0, landing inside every bound: it would rasterize a bogus triangle with
     # no error, and NaN comparisons are false so the depth test would not
-    # reject it either. Catch it here, before it disappears into the cast.
-    if item_int(mx.any(mx.isnan(x)) | mx.any(mx.isnan(y))):
+    # reject it either. z needs its own term: a NaN z with finite x/y (a NaN
+    # fed straight into the z component) rasterizes at the right pixels but
+    # wins every depth comparison, silently overwriting closer geometry.
+    # Catch all three here, before the coordinates disappear into the cast.
+    if item_int(mx.any(mx.isnan(x)) | mx.any(mx.isnan(y)) | mx.any(mx.isnan(z))):
         raise ValueError(
             "projected vertex coordinates are not finite (NaN); this most "
             "likely means a vertex has w == 0 in clip space. Clip triangles "
