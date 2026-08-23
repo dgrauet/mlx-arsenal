@@ -8,9 +8,38 @@ from __future__ import annotations
 
 import mlx.core as mx
 
-from ._fixedpoint import SUBPIXEL_SCALE
+from ._fixedpoint import SUBPIXEL_BITS, SUBPIXEL_SCALE
 
 __all__ = ["face_spans", "signed_area"]
+
+
+def _shift_amount(n: int) -> int:
+    """Bit count ``k`` such that ``n == 1 << k``, for power-of-two ``n``.
+
+    ``mx.floor_divide`` truncates toward zero for negative operands rather
+    than flooring, so any division by a power of two that might see a
+    negative numerator must go through ``mx.right_shift`` instead, which is
+    an arithmetic (floor) shift and agrees with Python's ``//`` for all
+    signs.
+
+    Raises:
+        ValueError: if ``n`` is not a positive power of two.
+    """
+    if n <= 0 or (n & (n - 1)) != 0:
+        raise ValueError(f"expected a power-of-two tile size, got {n}")
+    return n.bit_length() - 1
+
+
+def _floor_div_pow2(x: mx.array, bits: int) -> mx.array:
+    """``floor(x / 2**bits)`` for possibly-negative ``x``, exact for all signs.
+
+    Exposed (private) so the floor behaviour on negative fixed-point
+    coordinates can be pinned directly by a test, independent of the
+    downstream clamp in :func:`face_spans` which otherwise hides a regression
+    to truncating division: any negative numerator clamps to the same ``0``
+    whether it was floored correctly or merely truncated toward zero.
+    """
+    return mx.right_shift(x, bits)
 
 
 def signed_area(verts_fx: mx.array, faces: mx.array) -> mx.array:
@@ -58,8 +87,8 @@ def face_spans(
 
     # Fixed-point bounds -> pixel indices whose centres could be covered.
     half = SUBPIXEL_SCALE // 2
-    px0 = mx.floor_divide(lo - half + SUBPIXEL_SCALE - 1, SUBPIXEL_SCALE)
-    px1 = mx.floor_divide(hi - half, SUBPIXEL_SCALE)
+    px0 = _floor_div_pow2(lo - half + SUBPIXEL_SCALE - 1, SUBPIXEL_BITS)
+    px1 = _floor_div_pow2(hi - half, SUBPIXEL_BITS)
 
     max_xy = mx.array([width - 1, height - 1], dtype=mx.int32)
     px0 = mx.clip(px0, mx.array(0, dtype=mx.int32), max_xy)
@@ -67,8 +96,9 @@ def face_spans(
 
     onscreen = mx.all(mx.logical_and(hi >= half, lo <= max_xy * SUBPIXEL_SCALE + half), axis=1)
 
-    t0 = mx.floor_divide(px0, tile_size)
-    t1 = mx.floor_divide(px1, tile_size)
+    tile_bits = _shift_amount(tile_size)
+    t0 = _floor_div_pow2(px0, tile_bits)
+    t1 = _floor_div_pow2(px1, tile_bits)
     tile_bounds = mx.concatenate([t0, t1], axis=1).astype(mx.int32)  # [tx0,ty0,tx1,ty1]
 
     area = signed_area(verts_fx, faces)
