@@ -246,5 +246,90 @@ class TestEdgeCases:
         assert covered == 0, "Out-of-viewport triangle should not cover any pixels"
 
 
+def _tri(z=0.5):
+    v = mx.array(
+        [[-0.5, -0.5, z, 1.0], [0.5, -0.5, z, 1.0], [-0.5, 0.5, z, 1.0]],
+        dtype=mx.float32,
+    )
+    f = mx.array([[0, 1, 2]], dtype=mx.int32)
+    return v, f
+
+
+class TestPublicApi:
+    def test_default_returns_two_arrays(self):
+        v, f = _tri()
+        out = rasterize_triangles(v, f, 32, 32)
+        assert len(out) == 2
+        fi, bary = out
+        assert fi.shape == (32, 32)
+        assert bary.shape == (32, 32, 3)
+        assert fi.dtype == mx.int32
+
+    def test_return_depth_adds_third_array(self):
+        v, f = _tri()
+        fi, bary, depth = rasterize_triangles(v, f, 32, 32, return_depth=True)
+        assert depth.shape == (32, 32)
+        assert depth.dtype == mx.float32
+        covered = fi > 0
+        assert bool(mx.any(covered).item())
+        assert item_float(mx.max(mx.where(covered, depth, mx.zeros_like(depth)))) < 1.0
+
+    def test_cull_none_is_the_default(self):
+        v, f = _tri()
+        a = rasterize_triangles(v, f, 32, 32)[0]
+        b = rasterize_triangles(v, f, 32, 32, cull="none")[0]
+        assert bool(mx.array_equal(a, b).item())
+
+    def test_cull_removes_one_orientation(self):
+        v, f = _tri()
+        back = rasterize_triangles(v, f, 32, 32, cull="back")[0]
+        front = rasterize_triangles(v, f, 32, 32, cull="front")[0]
+        assert (item_int(mx.sum(back)) == 0) != (item_int(mx.sum(front)) == 0)
+
+    def test_rejects_bad_cull_value(self):
+        v, f = _tri()
+        with pytest.raises(ValueError, match="cull"):
+            rasterize_triangles(v, f, 32, 32, cull="sideways")  # ty: ignore[invalid-argument-type]
+
+    def test_rejects_out_of_range_vertex_index(self):
+        v, _ = _tri()
+        bad = mx.array([[0, 1, 99]], dtype=mx.int32)
+        with pytest.raises(ValueError, match="vertex index"):
+            rasterize_triangles(v, bad, 32, 32)
+
+    def test_rejects_oversized_image(self):
+        v, f = _tri()
+        with pytest.raises(ValueError, match="16384"):
+            rasterize_triangles(v, f, 20000, 32)
+
+    def test_zero_faces_returns_background(self):
+        v, _ = _tri()
+        empty = mx.zeros((0, 3), dtype=mx.int32)
+        fi, bary = rasterize_triangles(v, empty, 16, 16)
+        assert item_int(mx.sum(fi)) == 0
+        assert item_float(mx.max(mx.abs(bary))) == 0.0
+
+    def test_rejects_near_plane_vertex(self):
+        # w = 1e-7 blows the projected fixed-point coordinate up to
+        # int32-saturation magnitude, which is far past what int64 edge
+        # functions can multiply without overflow.
+        v = mx.array(
+            [
+                [-0.5, -0.5, 0.5, 1e-7],
+                [0.5, -0.5, 0.5, 1.0],
+                [-0.5, 0.5, 0.5, 1.0],
+            ],
+            dtype=mx.float32,
+        )
+        f = mx.array([[0, 1, 2]], dtype=mx.int32)
+        with pytest.raises(ValueError, match="representable range"):
+            rasterize_triangles(v, f, 32, 32)
+
+    def test_ordinary_mesh_does_not_trigger_near_plane_check(self):
+        v, f = _tri()
+        # Should not raise.
+        rasterize_triangles(v, f, 32, 32)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -1,147 +1,74 @@
 """Metal triangle rasterizer with z-buffering for Apple Silicon.
 
-Port of Hunyuan3D-2.1 CUDA rasterizer to Metal via mx.fast.metal_kernel.
-Uses a per-pixel kernel that loops over all faces with bounding-box culling.
+Tile-binned: faces are bucketed into screen tiles so each tile tests only the
+faces that can touch it, instead of every thread scanning every face. Coverage
+uses exact int64 edge functions over 1/16-pixel fixed-point coordinates and the
+top-left fill rule, so adjacent triangles cannot both claim a shared edge, nor
+leave a crack between them.
+
+Note that this function synchronizes: the number of (tile, face) pairs has to
+reach the host to size the pair buffer, so it cannot stay lazy in an MLX graph.
 """
+
+from __future__ import annotations
+
+from typing import Literal, overload
 
 import mlx.core as mx
 
-METAL_HEADER = """
-inline float calculateSignedArea2(float2 a, float2 b, float2 c) {
-    return ((c.x - a.x) * (b.y - a.y) - (b.x - a.x) * (c.y - a.y));
-}
+from mlx_arsenal._typing import item_int
 
-inline float3 calculateBarycentricCoordinate(float2 a, float2 b, float2 c, float2 p) {
-    float beta_tri = calculateSignedArea2(a, p, c);
-    float gamma_tri = calculateSignedArea2(a, b, p);
-    float area = calculateSignedArea2(a, b, c);
-    if (area == 0.0f) return float3(-1.0f, -1.0f, -1.0f);
-    float tri_inv = 1.0f / area;
-    float beta = beta_tri * tri_inv;
-    float gamma = gamma_tri * tri_inv;
-    return float3(1.0f - beta - gamma, beta, gamma);
-}
+from ._binning import build_tile_lists, choose_tiling
+from ._fixedpoint import MAX_DIM, to_screen
+from ._tile_raster import raster_tiles
 
-inline bool isBarycentricCoordInBounds(float3 bary) {
-    return bary.x >= 0.0f && bary.x <= 1.0f &&
-           bary.y >= 0.0f && bary.y <= 1.0f &&
-           bary.z >= 0.0f && bary.z <= 1.0f;
-}
-"""
+__all__ = ["rasterize_triangles"]
 
-# ---------------------------------------------------------------------------
-# Per-pixel rasterize + barycentric kernel  (T = float32)
-#
-# Grid = (total_pixels, 1, 1)
-# One thread per pixel. Each thread loops over all faces, tracks the closest
-# via depth comparison (no atomics needed).
-#
-# Inputs:
-#   screen_verts – (N*4,) float32 [sx, sy, sz, w] per vertex (precomputed)
-#   faces        – (F*3,) int32 data → as_type<int>()
-#   depth_prior  – (H*W,) float32
-#   dims         – (4,) int32 [width, height, num_faces, total_pixels]
-#   fparams      – (1,) float32 [occlusion_truncation]
-#
-# Outputs:
-#   findices       – float (MLX converts to int32 via output_dtypes)
-#   barycentric_out– float32
-# ---------------------------------------------------------------------------
-RASTERIZE_SOURCE = """
-    uint pix = thread_position_in_grid.x;
+_CULL_MODES = ("none", "back", "front")
 
-    int width      = as_type<int>(dims[0]);
-    int height     = as_type<int>(dims[1]);
-    uint num_faces = as_type<uint>(dims[2]);
-    uint total_px  = as_type<uint>(dims[3]);
-    if (pix >= total_px) return;
-
-    float occlusion_trunc = fparams[0];
-    float px = (float)(pix % (uint)width) + 0.5f;
-    float py = (float)(pix / (uint)width) + 0.5f;
-
-    uint  best_face  = 0;         // 0 = background
-    float best_depth = 1e30f;
-    float3 best_bary = float3(0.0f);
-    float  best_w0 = 1.0f, best_w1 = 1.0f, best_w2 = 1.0f;
-
-    for (uint f = 0; f < num_faces; f++) {
-        int v0i = as_type<int>(faces[f * 3]);
-        int v1i = as_type<int>(faces[f * 3 + 1]);
-        int v2i = as_type<int>(faces[f * 3 + 2]);
-
-        // Read precomputed screen-space verts: (sx, sy, sz, w)
-        float sx0 = screen_verts[v0i*4],   sy0 = screen_verts[v0i*4+1];
-        float sz0 = screen_verts[v0i*4+2], sw0 = screen_verts[v0i*4+3];
-        float sx1 = screen_verts[v1i*4],   sy1 = screen_verts[v1i*4+1];
-        float sz1 = screen_verts[v1i*4+2], sw1 = screen_verts[v1i*4+3];
-        float sx2 = screen_verts[v2i*4],   sy2 = screen_verts[v2i*4+1];
-        float sz2 = screen_verts[v2i*4+2], sw2 = screen_verts[v2i*4+3];
-
-        // Bounding box culling
-        float x_min = min(sx0, min(sx1, sx2));
-        float x_max = max(sx0, max(sx1, sx2));
-        float y_min = min(sy0, min(sy1, sy2));
-        float y_max = max(sy0, max(sy1, sy2));
-
-        if (px < x_min || px > x_max + 1.0f ||
-            py < y_min || py > y_max + 1.0f) continue;
-
-        float3 bary = calculateBarycentricCoordinate(
-            float2(sx0, sy0), float2(sx1, sy1), float2(sx2, sy2), float2(px, py));
-        if (!isBarycentricCoordInBounds(bary)) continue;
-
-        float depth = bary.x * sz0 + bary.y * sz1 + bary.z * sz2;
-
-        // Depth prior occlusion culling
-        float depth_thres = depth_prior[pix] * 0.49999f + 0.5f + occlusion_trunc;
-        if (depth < depth_thres) continue;
-
-        if (depth < best_depth) {
-            best_depth = depth;
-            best_face  = f + 1;   // 1-indexed
-            best_bary  = bary;
-            best_w0 = sw0;  best_w1 = sw1;  best_w2 = sw2;
-        }
-    }
-
-    // Perspective-correct barycentric
-    if (best_face > 0) {
-        best_bary.x /= best_w0;
-        best_bary.y /= best_w1;
-        best_bary.z /= best_w2;
-        float w_inv = 1.0f / (best_bary.x + best_bary.y + best_bary.z);
-        best_bary *= w_inv;
-    }
-
-    findices[pix] = (float)best_face;
-    barycentric_out[pix * 3]     = best_bary.x;
-    barycentric_out[pix * 3 + 1] = best_bary.y;
-    barycentric_out[pix * 3 + 2] = best_bary.z;
-"""
-
-_rasterize_kernel = None
+# The tile kernel's edge function (and the binning stage's signed-area test)
+# forms two differences of fixed-point vertex coordinates and multiplies them
+# together, then subtracts a second such product:
+#   edge = (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+# If every fixed-point coordinate is bounded by B in absolute value, a
+# difference of two coordinates is bounded by 2B, a product of two
+# differences by (2B)*(2B) = 4*B**2, and the subtraction of two such products
+# by 8*B**2. This is evaluated in int64, whose range tops out at 2**63 - 1, so
+# overflow-free evaluation requires 8*B**2 < 2**63, i.e. B < 2**30. A vertex
+# whose projected fixed-point coordinate approaches this bound is nowhere
+# near representable screen space (a 16384px image only spans 16384*16 =
+# 262144 fixed-point units), so this only fires when a vertex crosses or
+# nears the camera's near plane and its projected position blows up.
+_MAX_FX_MAGNITUDE = 1 << 30
 
 
-def _get_rasterize_kernel():
-    global _rasterize_kernel
-    if _rasterize_kernel is None:
-        _rasterize_kernel = mx.fast.metal_kernel(
-            name="rasterize_perpixel_kernel",
-            input_names=[
-                "screen_verts",
-                "faces",
-                "depth_prior",
-                "dims",
-                "fparams",
-            ],
-            output_names=["findices", "barycentric_out"],
-            source=RASTERIZE_SOURCE,
-            header=METAL_HEADER,
-            ensure_row_contiguous=True,
-            atomic_outputs=False,
-        )
-    return _rasterize_kernel
+@overload
+def rasterize_triangles(
+    vertices: mx.array,
+    faces: mx.array,
+    width: int,
+    height: int,
+    depth_prior: mx.array | None = ...,
+    occlusion_truncation: float = ...,
+    cull: Literal["none", "back", "front"] = ...,
+    return_depth: Literal[False] = ...,
+    _tile_size: int | None = ...,
+) -> tuple[mx.array, mx.array]: ...
+
+
+@overload
+def rasterize_triangles(
+    vertices: mx.array,
+    faces: mx.array,
+    width: int,
+    height: int,
+    depth_prior: mx.array | None = ...,
+    occlusion_truncation: float = ...,
+    cull: Literal["none", "back", "front"] = ...,
+    *,
+    return_depth: Literal[True],
+    _tile_size: int | None = ...,
+) -> tuple[mx.array, mx.array, mx.array]: ...
 
 
 def rasterize_triangles(
@@ -151,54 +78,100 @@ def rasterize_triangles(
     height: int,
     depth_prior: mx.array | None = None,
     occlusion_truncation: float = 1e-6,
-) -> tuple[mx.array, mx.array]:
+    cull: Literal["none", "back", "front"] = "none",
+    return_depth: bool = False,
+    _tile_size: int | None = None,
+) -> tuple[mx.array, mx.array] | tuple[mx.array, mx.array, mx.array]:
     """Rasterize projected triangles with depth-aware z-buffering.
 
     Args:
         vertices: (N, 4) float32, clip-space homogeneous (x, y, z, w).
         faces: (F, 3) int32, triangle vertex indices.
-        width: Image width in pixels.
-        height: Image height in pixels.
-        depth_prior: Optional (H, W) float32 depth map for occlusion culling.
+        width: Image width in pixels, at most 16384.
+        height: Image height in pixels, at most 16384.
+        depth_prior: Optional (H, W) float32 depth map for occlusion culling,
+            expected in **NDC z** (pre-mapping): it is mapped internally the
+            same way vertex z is mapped for rasterization. The ``depth``
+            returned by ``return_depth=True`` is already post-mapping, so
+            feeding a previously returned depth map straight back in as a
+            prior double-maps it and culls the wrong geometry — convert it
+            back to NDC first.
         occlusion_truncation: Depth threshold for occlusion.
+        cull: Discard faces by orientation. ``"none"`` keeps everything, which
+            is the default and matches earlier releases.
+        return_depth: Also return the winning face's interpolated depth.
+        _tile_size: Force the binning tile size. Private test hook — results are
+            invariant to it.
 
     Returns:
-        face_indices: (H, W) int32 -- 1-indexed face ID per pixel (0 = background).
-        barycentric: (H, W, 3) float32 -- barycentric coordinates per pixel.
+        face_indices: (H, W) int32 — 1-indexed face ID per pixel (0 = background).
+        barycentric: (H, W, 3) float32 — perspective-correct barycentrics.
+        depth: (H, W) float32, only when ``return_depth`` — ``+inf`` on
+            background pixels.
+
+    Raises:
+        ValueError: on an unknown ``cull`` mode, an out-of-range vertex index,
+            an image larger than 16384px per axis, or projected vertex
+            coordinates outside the representable range (most likely
+            geometry crossing or approaching the near plane).
+        MemoryError: if the mesh needs more (tile, face) pairs than the budget
+            allows even at the coarsest tiling.
     """
+    if cull not in _CULL_MODES:
+        raise ValueError(f"cull must be one of {_CULL_MODES}, got {cull!r}")
+    if width > MAX_DIM or height > MAX_DIM:
+        raise ValueError(
+            f"rasterize supports images up to {MAX_DIM}px per axis; got {width}x{height}"
+        )
+
     num_faces = faces.shape[0]
-    total_pixels = height * width
+    if num_faces > 0:
+        max_index = item_int(mx.max(faces))
+        min_index = item_int(mx.min(faces))
+        if max_index >= vertices.shape[0] or min_index < 0:
+            raise ValueError(
+                f"faces contains a vertex index outside [0, {vertices.shape[0] - 1}]: "
+                f"saw [{min_index}, {max_index}]"
+            )
 
-    # Precompute screen-space vertices in pure MLX (avoids redundant
-    # per-pixel transforms in the Metal kernel)
-    v = vertices.astype(mx.float32)
-    w_clip = v[:, 3:4]  # (N, 1)
-    screen_x = (v[:, 0:1] / w_clip * 0.5 + 0.5) * (width - 1) + 0.5
-    screen_y = (0.5 + 0.5 * v[:, 1:2] / w_clip) * (height - 1) + 0.5
-    screen_z = v[:, 2:3] / w_clip * 0.49999 + 0.5
-    screen_verts = mx.concatenate([screen_x, screen_y, screen_z, w_clip], axis=1).reshape(
-        -1
-    )  # (N*4,) float32
+    if num_faces == 0:
+        bg_faces = mx.zeros((height, width), dtype=mx.int32)
+        bg_bary = mx.zeros((height, width, 3), dtype=mx.float32)
+        if return_depth:
+            bg_depth = mx.full((height, width), float("inf"), dtype=mx.float32)
+            return bg_faces, bg_bary, bg_depth
+        return bg_faces, bg_bary
 
-    faces_flat = faces.reshape(-1).astype(mx.int32)
+    verts_fx, verts_zw = to_screen(vertices, width, height)
 
-    if depth_prior is not None:
-        depth_prior_flat = depth_prior.reshape(-1).astype(mx.float32)
-    else:
-        depth_prior_flat = mx.full((total_pixels,), -1e30, dtype=mx.float32)
+    max_fx = item_int(mx.max(mx.abs(verts_fx)))
+    if max_fx >= _MAX_FX_MAGNITUDE:
+        raise ValueError(
+            f"projected vertex coordinates are outside the representable range "
+            f"(|coord| = {max_fx} >= {_MAX_FX_MAGNITUDE} fixed-point units); this "
+            f"most likely means geometry crosses or approaches the near plane. "
+            f"Clip triangles against the near plane before rasterizing."
+        )
 
-    dims = mx.array([width, height, num_faces, total_pixels], dtype=mx.int32)
-    fparams = mx.array([occlusion_truncation], dtype=mx.float32)
-
-    tg_size = min(256, total_pixels)
-
-    findices, bary_flat = _get_rasterize_kernel()(
-        inputs=[screen_verts, faces_flat, depth_prior_flat, dims, fparams],
-        template=[("T", mx.float32)],
-        grid=(total_pixels, 1, 1),
-        threadgroup=(tg_size, 1, 1),
-        output_shapes=[(total_pixels,), (total_pixels * 3,)],
-        output_dtypes=[mx.int32, mx.float32],
+    tile_size, bounds, n_tiles, total_pairs = choose_tiling(
+        verts_fx, faces, width, height, cull, tile_size=_tile_size
+    )
+    tiles_x = (width + tile_size - 1) // tile_size
+    tiles_y = (height + tile_size - 1) // tile_size
+    sorted_faces, tile_starts = build_tile_lists(
+        bounds, n_tiles, total_pairs, tiles_x, tiles_y, num_faces
     )
 
-    return findices.reshape(height, width), bary_flat.reshape(height, width, 3)
+    findices, bary, depth = raster_tiles(
+        verts_fx,
+        verts_zw,
+        faces,
+        sorted_faces,
+        tile_starts,
+        width,
+        height,
+        tile_size,
+        depth_prior,
+        occlusion_truncation,
+    )
+    return (findices, bary, depth) if return_depth else (findices, bary)
