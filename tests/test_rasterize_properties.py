@@ -1,7 +1,7 @@
 import mlx.core as mx
 import numpy as np
 
-from mlx_arsenal._typing import array_from_any
+from mlx_arsenal._typing import array_from_any, item_int
 from mlx_arsenal.rasterize import rasterize_triangles
 from mlx_arsenal.rasterize._fixedpoint import to_screen
 from tests.rasterize_oracle import rasterize_reference
@@ -40,6 +40,7 @@ class TestWatertightness:
         rows = np.where(covered.any(axis=1))[0]
         cols = np.where(covered.any(axis=0))[0]
         interior = covered[rows[1] : rows[-1], cols[1] : cols[-1]]
+        assert interior.size > 0, "test proves nothing over an empty interior slice"
         assert interior.all(), f"{(~interior).sum()} hole pixels inside the mesh"
 
     def test_matches_oracle_on_partial_tiles(self):
@@ -88,6 +89,7 @@ class TestDeterminism:
         """
         v, f = _quad_mesh(6)
         a_fi, a_bary = rasterize_triangles(v, f, 64, 64)
+        assert item_int(mx.sum(a_fi > 0)) > 0, "test proves nothing if no pixel is covered"
         for _ in range(3):
             fi, bary = rasterize_triangles(v, f, 64, 64)
             assert bool(mx.array_equal(fi, a_fi).item())

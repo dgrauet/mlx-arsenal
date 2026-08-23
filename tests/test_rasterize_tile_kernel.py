@@ -135,6 +135,14 @@ class TestDepthPrior:
         verts_fx, verts_zw = to_screen(v, 32, 32)
         ts, bounds, n, total = choose_tiling(verts_fx, f, 32, 32, "none", tile_size=16)
         sf, starts = build_tile_lists(bounds, n, total, 2, 2, 1)
+
+        # Positive control: without a prior, this geometry covers pixels.
+        # depth_prior is the only behaviour on this branch with no oracle
+        # coverage, so without this control the test below would pass
+        # equally if the setup covered nothing at all.
+        unculled, _, _ = raster_tiles(verts_fx, verts_zw, f, sf, starts, 32, 32, ts, None, 1e-6)
+        assert item_int(mx.sum(unculled > 0)) > 0
+
         prior = mx.full((32, 32), 1.0, dtype=mx.float32)
         fi, _, _ = raster_tiles(verts_fx, verts_zw, f, sf, starts, 32, 32, ts, prior, 1e-6)
         assert item_int(mx.sum(fi)) == 0
