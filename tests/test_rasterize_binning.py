@@ -150,6 +150,21 @@ class TestChooseTiling:
         with pytest.raises(MemoryError, match="tile"):
             choose_tiling(verts, faces, 4096, 4096, "none")
 
+    def test_forced_tile_size_still_enforces_budget(self, monkeypatch):
+        # The private tile_size hook skips the adaptive search, but it must
+        # not skip the budget: total_pairs <= MAX_PAIRS is the invariant that
+        # keeps build_tile_lists' int32 offsets safe. Positive control first:
+        # the same forced call passes when the budget is honored.
+        verts = _fx([(0.0, 0.0), (4000.0, 0.0), (0.0, 4000.0)])
+        faces = mx.array([[0, 1, 2]], dtype=mx.int32)
+        ts, _, _, pairs = choose_tiling(verts, faces, 4096, 4096, "none", tile_size=64)
+        assert ts == 64
+        assert pairs > 4
+
+        monkeypatch.setattr("mlx_arsenal.rasterize._binning.MAX_PAIRS", 4)
+        with pytest.raises(MemoryError, match="tile"):
+            choose_tiling(verts, faces, 4096, 4096, "none", tile_size=64)
+
     def test_budget_constant_matches_spec(self):
         assert MAX_PAIRS == 32 * 1024 * 1024
 

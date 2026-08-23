@@ -422,6 +422,35 @@ class TestPublicApi:
         with pytest.raises(ValueError, match="not finite|NaN"):
             rasterize_triangles(v, f, 32, 32)
 
+    def test_rejects_nan_z_with_finite_xy(self):
+        # NaN in z alone slips past a check that only inspects x and y: the
+        # face rasterizes silently and wins every depth comparison, because
+        # `depth >= best_depth` is false when depth is NaN. Positive control
+        # first: the same triangle with finite z covers pixels, so the
+        # raising case below exercises a non-empty region.
+        f = mx.array([[0, 1, 2]], dtype=mx.int32)
+        v_finite = mx.array(
+            [
+                [-0.5, -0.5, 0.5, 1.0],
+                [0.5, -0.5, 0.5, 1.0],
+                [-0.5, 0.5, 0.5, 1.0],
+            ],
+            dtype=mx.float32,
+        )
+        findices, _ = rasterize_triangles(v_finite, f, 32, 32)
+        assert item_int(mx.sum(findices > 0)) > 0
+
+        v_nan_z = mx.array(
+            [
+                [-0.5, -0.5, float("nan"), 1.0],
+                [0.5, -0.5, 0.5, 1.0],
+                [-0.5, 0.5, 0.5, 1.0],
+            ],
+            dtype=mx.float32,
+        )
+        with pytest.raises(ValueError, match="not finite|NaN"):
+            rasterize_triangles(v_nan_z, f, 32, 32)
+
 
 @pytest.mark.slow
 def test_large_mesh_completes():

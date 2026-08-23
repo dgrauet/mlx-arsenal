@@ -165,11 +165,14 @@ def choose_tiling(
         # defeats the budget check below and lets an unbounded scatter write
         # through in build_tile_lists. Widen before reducing.
         total = item_int(mx.sum(n.astype(mx.int64)))
-        if tile_size is not None or total <= MAX_PAIRS:
+        # The budget binds on the forced-tile_size path too: total_pairs <=
+        # MAX_PAIRS is the invariant that keeps build_tile_lists' int32
+        # offsets safe, so no caller may return past it.
+        if total <= MAX_PAIRS:
             return ts, bounds, n, total
         last = total
     raise MemoryError(
-        f"rasterize: {last} (tile, face) pairs at tile size {TILE_SIZES[-1]} "
+        f"rasterize: {last} (tile, face) pairs at tile size {candidates[-1]} "
         f"exceeds the {MAX_PAIRS} pair budget. The mesh has faces spanning a "
         f"large share of the image; reduce the face count or the resolution."
     )
@@ -252,9 +255,10 @@ def build_tile_lists(
             mx.zeros((num_tiles + 1,), dtype=mx.int32),
         )
 
-    # Safe in int32 once the budget check above is honest (total_pairs <=
-    # MAX_PAIRS = 32M), but widen anyway so this cumsum carries no dependency
-    # on that reasoning holding elsewhere.
+    # These offsets fit int32 because choose_tiling enforces total_pairs <=
+    # MAX_PAIRS = 32M on every path, including the forced-tile_size hook.
+    # The int64 widening only protects the cumsum's intermediate sums; the
+    # final narrowing back to int32 still depends on that budget invariant.
     offsets = (mx.cumsum(n_tiles.astype(mx.int64), axis=0) - n_tiles).astype(mx.int32)
     params = mx.array([num_faces, tiles_x], dtype=mx.int32)
 

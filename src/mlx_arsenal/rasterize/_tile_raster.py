@@ -21,10 +21,13 @@ CHUNK = 256
 # `sx * 16` / `tid % 16u`. Changing either constant here without also editing
 # the source string desyncs threadgroup size from shared-memory layout (e.g.
 # CHUNK=128 would leave half the threadgroup buffer stale) and produces
-# silently wrong pixels, not a crash. These assertions are a cheap tripwire
-# until the source string is f-string-interpolated in a follow-up.
-assert CHUNK == 256, "CHUNK must match the literal 256s hardcoded in _SOURCE"
-assert RASTER_TILE == 16, "RASTER_TILE must match the literal 16s hardcoded in _SOURCE"
+# silently wrong pixels, not a crash. This tripwire is a plain raise, not an
+# assert, so `python -O` cannot strip it; it stays until the source string is
+# f-string-interpolated in a follow-up.
+if CHUNK != 256 or RASTER_TILE != 16:
+    raise RuntimeError(
+        "CHUNK and RASTER_TILE must match the literal 256s and 16s hardcoded in _SOURCE"
+    )
 
 __all__ = ["RASTER_TILE", "raster_tiles"]
 
