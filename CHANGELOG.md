@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1](https://github.com/dgrauet/mlx-arsenal/compare/v0.11.0...v0.11.1) (2026-08-23)
+
+
+### Bug Fixes
+
+* **rasterize:** reject NaN z, enforce pair budget on forced tile size ([#57](https://github.com/dgrauet/mlx-arsenal/issues/57)) ([655e4ee](https://github.com/dgrauet/mlx-arsenal/commit/655e4eedb4ec7b547e363b79b7c85d61544d3111))
+
 ## [0.11.0](https://github.com/dgrauet/mlx-arsenal/compare/v0.10.1...v0.11.0) (2026-08-23)
 
 
