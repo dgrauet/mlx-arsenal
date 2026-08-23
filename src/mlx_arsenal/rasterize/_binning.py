@@ -12,7 +12,14 @@ from mlx_arsenal._typing import item_int
 
 from ._fixedpoint import SUBPIXEL_BITS, SUBPIXEL_SCALE
 
-__all__ = ["MAX_PAIRS", "TILE_SIZES", "choose_tiling", "face_spans", "signed_area"]
+__all__ = [
+    "MAX_PAIRS",
+    "TILE_SIZES",
+    "build_tile_lists",
+    "choose_tiling",
+    "face_spans",
+    "signed_area",
+]
 
 MAX_PAIRS = 32 * 1024 * 1024  # 256 MB of int64 keys
 TILE_SIZES = (16, 32, 64)
@@ -160,3 +167,101 @@ def choose_tiling(
         f"exceeds the {MAX_PAIRS} pair budget. The mesh has faces spanning a "
         f"large share of the image; reduce the face count or the resolution."
     )
+
+
+_SCATTER_SOURCE = """
+    uint f = thread_position_in_grid.x;
+    uint num_faces = as_type<uint>(params[0]);
+    uint tiles_x   = as_type<uint>(params[1]);
+    if (f >= num_faces) return;
+
+    int n = n_tiles[f];
+    if (n <= 0) return;
+
+    int tx0 = tile_bounds[f * 4];
+    int ty0 = tile_bounds[f * 4 + 1];
+    int tx1 = tile_bounds[f * 4 + 2];
+    int ty1 = tile_bounds[f * 4 + 3];
+
+    long base = (long)offsets[f];
+    long stride = (long)num_faces;
+    uint k = 0;
+    for (int ty = ty0; ty <= ty1; ty++) {
+        for (int tx = tx0; tx <= tx1; tx++) {
+            long tile = (long)ty * (long)tiles_x + (long)tx;
+            keys[base + k] = tile * stride + (long)f;
+            k++;
+        }
+    }
+"""
+
+_scatter_kernel = None
+
+
+def _get_scatter_kernel():
+    global _scatter_kernel
+    if _scatter_kernel is None:
+        _scatter_kernel = mx.fast.metal_kernel(
+            name="rasterize_scatter_pairs",
+            input_names=["tile_bounds", "n_tiles", "offsets", "params"],
+            output_names=["keys"],
+            source=_SCATTER_SOURCE,
+            ensure_row_contiguous=True,
+            atomic_outputs=False,
+        )
+    return _scatter_kernel
+
+
+def build_tile_lists(
+    tile_bounds: mx.array,
+    n_tiles: mx.array,
+    total_pairs: int,
+    tiles_x: int,
+    tiles_y: int,
+    num_faces: int,
+) -> tuple[mx.array, mx.array]:
+    """Build the per-tile face lists.
+
+    Faces are keyed as ``tile * num_faces + face`` and sorted once, which makes
+    them ascend within each tile — the tie-break an ascending linear scan would
+    produce (lowest face index wins at equal depth).
+
+    Args:
+        tile_bounds: (F, 4) int32 from :func:`face_spans`.
+        n_tiles: (F,) int32 from :func:`face_spans`.
+        total_pairs: Sum of ``n_tiles``, already on the host.
+        tiles_x: Tile columns.
+        tiles_y: Tile rows.
+        num_faces: Face count, the key radix.
+
+    Returns:
+        sorted_faces: (total_pairs,) int32 face indices, tile-major.
+        tile_starts: (tiles_x * tiles_y + 1,) int32 offsets into
+            ``sorted_faces``.
+    """
+    num_tiles = tiles_x * tiles_y
+    if total_pairs == 0:
+        return (
+            mx.zeros((0,), dtype=mx.int32),
+            mx.zeros((num_tiles + 1,), dtype=mx.int32),
+        )
+
+    offsets = (mx.cumsum(n_tiles, axis=0) - n_tiles).astype(mx.int32)
+    params = mx.array([num_faces, tiles_x], dtype=mx.int32)
+
+    (keys,) = _get_scatter_kernel()(
+        inputs=[tile_bounds.reshape(-1), n_tiles, offsets, params],
+        template=[("T", mx.int32)],
+        grid=(num_faces, 1, 1),
+        threadgroup=(min(256, num_faces), 1, 1),
+        output_shapes=[(total_pairs,)],
+        output_dtypes=[mx.int64],
+    )
+
+    keys = mx.sort(keys)
+    sorted_faces = (keys % num_faces).astype(mx.int32)
+    tile_of = keys // num_faces
+    tile_starts = mx.searchsorted(tile_of, mx.arange(num_tiles + 1, dtype=mx.int64)).astype(
+        mx.int32
+    )
+    return sorted_faces, tile_starts

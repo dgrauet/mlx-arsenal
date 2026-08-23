@@ -6,6 +6,7 @@ from mlx_arsenal.rasterize._binning import (
     MAX_PAIRS,
     _floor_div_pow2,
     _shift_amount,
+    build_tile_lists,
     choose_tiling,
     face_spans,
     signed_area,
@@ -151,3 +152,46 @@ class TestChooseTiling:
 
     def test_budget_constant_matches_spec(self):
         assert MAX_PAIRS == 32 * 1024 * 1024
+
+
+def _lists(verts, faces, width, height, tile_size):
+    ts, bounds, n, total = choose_tiling(verts, faces, width, height, "none", tile_size=tile_size)
+    tiles_x = (width + ts - 1) // ts
+    tiles_y = (height + ts - 1) // ts
+    sf, starts = build_tile_lists(bounds, n, total, tiles_x, tiles_y, faces.shape[0])
+    return [
+        sf[item_int(starts[t]) : item_int(starts[t + 1])].tolist() for t in range(tiles_x * tiles_y)
+    ]
+
+
+class TestBuildTileLists:
+    def test_single_face_lands_in_its_tile_only(self):
+        verts = _fx([(17.0, 17.0), (20.0, 17.0), (17.0, 20.0)])
+        faces = mx.array([[0, 1, 2]], dtype=mx.int32)
+        per_tile = _lists(verts, faces, 64, 64, 16)
+        assert per_tile[5] == [0]  # tile (1,1) of a 4x4 grid
+        assert sum(len(t) for t in per_tile) == 1
+
+    def test_faces_ascend_within_a_tile(self):
+        pts, faces_list = [], []
+        for k in range(3):
+            base = len(pts)
+            pts += [(1.0, 1.0), (5.0, 1.0), (1.0, 5.0)]
+            faces_list.append([base, base + 1, base + 2])
+        verts = _fx(pts)
+        faces = mx.array(faces_list, dtype=mx.int32)
+        per_tile = _lists(verts, faces, 64, 64, 16)
+        assert per_tile[0] == [0, 1, 2]
+
+    def test_spanning_face_appears_in_every_covered_tile(self):
+        verts = _fx([(0.0, 0.0), (40.0, 0.0), (0.0, 40.0)])
+        faces = mx.array([[0, 1, 2]], dtype=mx.int32)
+        per_tile = _lists(verts, faces, 64, 64, 16)
+        covered = [i for i, t in enumerate(per_tile) if t]
+        assert covered == [0, 1, 2, 4, 5, 6, 8, 9, 10]
+
+    def test_empty_input_gives_empty_lists(self):
+        verts = _fx([(0.0, 0.0), (2.0, 2.0), (4.0, 4.0)])  # degenerate
+        faces = mx.array([[0, 1, 2]], dtype=mx.int32)
+        per_tile = _lists(verts, faces, 64, 64, 16)
+        assert all(t == [] for t in per_tile)
