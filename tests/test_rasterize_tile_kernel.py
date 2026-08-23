@@ -47,6 +47,26 @@ def _quad_mesh(n, seed=0):
     return array_from_any(verts), array_from_any(faces)
 
 
+def _perspective_soup(n_tris=20, seed=11):
+    """Independent triangles with distinct per-vertex ``z`` AND ``w``, half of
+    them wound backwards.
+
+    Both halves are load-bearing. Mixed winding makes the kernel's
+    ``area < 0`` swap path fire; distinct per-vertex ``w`` makes the
+    perspective-correct division depend on each vertex's own ``w``. Equal
+    values in either would hide the corresponding half of a mispaired swap.
+    """
+    rng = np.random.default_rng(seed)
+    nv = n_tris * 3
+    pts = rng.uniform(-0.8, 0.8, size=(nv, 2))
+    z = rng.uniform(0.2, 0.8, size=(nv, 1))
+    w = rng.uniform(0.6, 2.5, size=(nv, 1))
+    verts = np.concatenate([pts * w, z * w, w], axis=1).astype(np.float32)
+    tri = np.arange(nv).reshape(n_tris, 3)
+    tri[::2] = tri[::2][:, ::-1]  # flip half the windings -> negative areas
+    return array_from_any(verts), array_from_any(tri.astype(np.int32))
+
+
 class TestAgainstOracle:
     def test_single_triangle_matches(self):
         v = mx.array(
@@ -74,6 +94,24 @@ class TestAgainstOracle:
         finite = np.isfinite(ref_depth)
         np.testing.assert_allclose(got[finite], ref_depth[finite], atol=1e-5)
         assert np.all(np.isinf(got[~finite]))
+
+    def test_perspective_and_mixed_winding_match(self):
+        """Guards the winding-swap/vertex-attribute pairing.
+
+        Reinstating a ``z``/``w`` swap on top of the weight swap mispairs each
+        weight with another vertex's attributes. With ``w == 1`` everywhere the
+        perspective half of that mistake is invisible, so this is the only test
+        in the file that can see it.
+        """
+        v, f = _perspective_soup()
+        fi, bary, depth = _run(v, f, 96, 96)
+        ref_fi, ref_bary, ref_depth = _oracle(v, f, 96, 96)
+        covered = int((ref_fi > 0).sum())
+        assert covered > 0, "test proves nothing if no pixel is covered"
+        np.testing.assert_array_equal(np.array(fi.tolist()), ref_fi)
+        np.testing.assert_allclose(np.array(bary.tolist()), ref_bary, atol=1e-5)
+        finite = np.isfinite(ref_depth)
+        np.testing.assert_allclose(np.array(depth.tolist())[finite], ref_depth[finite], atol=1e-5)
 
 
 class TestBackground:
