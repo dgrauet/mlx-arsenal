@@ -144,13 +144,20 @@ def rasterize_triangles(
 
     verts_fx, verts_zw = to_screen(vertices, width, height)
 
-    max_fx = item_int(mx.max(mx.abs(verts_fx)))
-    if max_fx >= _MAX_FX_MAGNITUDE:
+    # Bound both signs directly rather than via `mx.abs`: `int32` cannot
+    # represent `abs(INT32_MIN)` (it saturates and stays negative), so an
+    # abs-then-compare check silently misses a coordinate that saturated
+    # negative.
+    max_fx = item_int(mx.max(verts_fx))
+    min_fx = item_int(mx.min(verts_fx))
+    if max_fx >= _MAX_FX_MAGNITUDE or min_fx <= -_MAX_FX_MAGNITUDE:
+        offending = max_fx if max_fx >= _MAX_FX_MAGNITUDE else min_fx
         raise ValueError(
             f"projected vertex coordinates are outside the representable range "
-            f"(|coord| = {max_fx} >= {_MAX_FX_MAGNITUDE} fixed-point units); this "
-            f"most likely means geometry crosses or approaches the near plane. "
-            f"Clip triangles against the near plane before rasterizing."
+            f"(coord = {offending}, allowed magnitude < {_MAX_FX_MAGNITUDE} "
+            f"fixed-point units); this most likely means geometry crosses or "
+            f"approaches the near plane. Clip triangles against the near plane "
+            f"before rasterizing."
         )
 
     tile_size, bounds, n_tiles, total_pairs = choose_tiling(

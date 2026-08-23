@@ -325,6 +325,38 @@ class TestPublicApi:
         with pytest.raises(ValueError, match="representable range"):
             rasterize_triangles(v, f, 32, 32)
 
+    def test_rejects_near_plane_vertex_positive_saturation(self):
+        # (x, y) = (1, 1) with w = 1e-7 projects to +INT32_MAX after
+        # int32 saturation.
+        v = mx.array(
+            [
+                [1.0, 1.0, 0.5, 1e-7],
+                [0.5, -0.5, 0.5, 1.0],
+                [-0.5, 0.5, 0.5, 1.0],
+            ],
+            dtype=mx.float32,
+        )
+        f = mx.array([[0, 1, 2]], dtype=mx.int32)
+        with pytest.raises(ValueError, match="representable range"):
+            rasterize_triangles(v, f, 32, 32)
+
+    def test_rejects_near_plane_vertex_negative_saturation(self):
+        # (x, y) = (-1, -1) with w = 1e-7 projects to -INT32_MAX-1 after
+        # int32 saturation. `mx.abs` cannot represent `abs(INT32_MIN)` (it
+        # saturates and stays negative), so a check built on `mx.abs` would
+        # silently miss exactly this case.
+        v = mx.array(
+            [
+                [-1.0, -1.0, 0.5, 1e-7],
+                [0.5, -0.5, 0.5, 1.0],
+                [-0.5, 0.5, 0.5, 1.0],
+            ],
+            dtype=mx.float32,
+        )
+        f = mx.array([[0, 1, 2]], dtype=mx.int32)
+        with pytest.raises(ValueError, match="representable range"):
+            rasterize_triangles(v, f, 32, 32)
+
     def test_ordinary_mesh_does_not_trigger_near_plane_check(self):
         v, f = _tri()
         # Should not raise.
