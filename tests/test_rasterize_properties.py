@@ -72,9 +72,8 @@ class TestTileSizeInvariance:
         v, f = _quad_mesh(10)
         width, height = PARTIAL_TILE_WIDTH, PARTIAL_TILE_HEIGHT
         ref_fi, ref_bary = rasterize_triangles(v, f, width, height, _tile_size=16)
-        assert (
-            int((np.array(ref_fi.tolist()) > 0).sum()) > 0
-        ), "test proves nothing if no pixel is covered"
+        covered = int((np.array(ref_fi.tolist()) > 0).sum())
+        assert covered > 0, "test proves nothing if no pixel is covered"
         for ts in (32, 64):
             fi, bary = rasterize_triangles(v, f, width, height, _tile_size=ts)
             assert bool(mx.array_equal(fi, ref_fi).item()), f"tile size {ts}"
