@@ -306,6 +306,18 @@ class TestPublicApi:
         front = rasterize_triangles(v, f, 32, 32, cull="front")[0]
         assert (item_int(mx.sum(back)) == 0) != (item_int(mx.sum(front)) == 0)
 
+    def test_cull_back_keeps_counter_clockwise(self):
+        # _tri() -- (-.5,-.5), (.5,-.5), (-.5,.5) in NDC -- winds
+        # counter-clockwise, which is front-facing by the documented
+        # convention. Pin the *direction*, not just that the two modes
+        # differ: a coordinated sign flip across the binning code and the
+        # oracle would still pass a mode-differs-from-the-other check.
+        v, f = _tri()
+        back = rasterize_triangles(v, f, 32, 32, cull="back")[0]
+        front = rasterize_triangles(v, f, 32, 32, cull="front")[0]
+        assert item_int(mx.sum(back > 0)) > 0
+        assert item_int(mx.sum(front > 0)) == 0
+
     def test_rejects_bad_cull_value(self):
         v, f = _tri()
         with pytest.raises(ValueError, match="cull"):
@@ -328,6 +340,17 @@ class TestPublicApi:
         fi, bary = rasterize_triangles(v, empty, 16, 16)
         assert item_int(mx.sum(fi)) == 0
         assert item_float(mx.max(mx.abs(bary))) == 0.0
+
+    def test_all_culled_returns_background(self):
+        # cull="back" removes the sole (counter-clockwise / front-facing)
+        # triangle, so total_pairs == 0 even though num_faces > 0. The spec's
+        # failure-modes table asks for background arrays with no dispatch
+        # here, the same as the zero-faces case above.
+        v, f = _tri()
+        fi, bary, depth = rasterize_triangles(v, f, 16, 16, cull="front", return_depth=True)
+        assert item_int(mx.sum(fi)) == 0
+        assert item_float(mx.max(mx.abs(bary))) == 0.0
+        assert bool(mx.all(mx.isinf(depth)).item())
 
     def test_rejects_near_plane_vertex(self):
         # w = 1e-7 blows the projected fixed-point coordinate up to
@@ -381,6 +404,23 @@ class TestPublicApi:
         v, f = _tri()
         # Should not raise.
         rasterize_triangles(v, f, 32, 32)
+
+    def test_rejects_nan_vertex_from_zero_over_zero(self):
+        # w = 0 with x = 0 gives x/w = 0/0 = NaN, which rounds and casts to
+        # fixed-point 0 -- inside every bound, so the Inf/saturation guard
+        # above does not catch it. Without a finiteness check this silently
+        # rasterizes a bogus triangle at the origin instead of raising.
+        v = mx.array(
+            [
+                [0.0, 0.0, 0.5, 0.0],
+                [0.5, -0.5, 0.5, 1.0],
+                [-0.5, 0.5, 0.5, 1.0],
+            ],
+            dtype=mx.float32,
+        )
+        f = mx.array([[0, 1, 2]], dtype=mx.int32)
+        with pytest.raises(ValueError, match="not finite|NaN"):
+            rasterize_triangles(v, f, 32, 32)
 
 
 @pytest.mark.slow

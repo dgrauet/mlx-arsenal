@@ -158,7 +158,13 @@ def choose_tiling(
     last = 0
     for ts in candidates:
         bounds, n = face_spans(verts_fx, faces, width, height, ts, cull)
-        total = item_int(mx.sum(n))
+        # n is int32 and mx.sum does not promote: for a mesh whose true pair
+        # count reaches 2**31, an int32 reduction silently wraps (verified:
+        # 4097 screen-spanning faces at 16384px, tile 16 -> true total
+        # 4,296,015,872 reduces to 1,048,576, which is under MAX_PAIRS). That
+        # defeats the budget check below and lets an unbounded scatter write
+        # through in build_tile_lists. Widen before reducing.
+        total = item_int(mx.sum(n.astype(mx.int64)))
         if tile_size is not None or total <= MAX_PAIRS:
             return ts, bounds, n, total
         last = total
@@ -246,7 +252,10 @@ def build_tile_lists(
             mx.zeros((num_tiles + 1,), dtype=mx.int32),
         )
 
-    offsets = (mx.cumsum(n_tiles, axis=0) - n_tiles).astype(mx.int32)
+    # Safe in int32 once the budget check above is honest (total_pairs <=
+    # MAX_PAIRS = 32M), but widen anyway so this cumsum carries no dependency
+    # on that reasoning holding elsewhere.
+    offsets = (mx.cumsum(n_tiles.astype(mx.int64), axis=0) - n_tiles).astype(mx.int32)
     params = mx.array([num_faces, tiles_x], dtype=mx.int32)
 
     (keys,) = _get_scatter_kernel()(

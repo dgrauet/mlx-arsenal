@@ -10,16 +10,13 @@ from __future__ import annotations
 
 import mlx.core as mx
 
+from mlx_arsenal._typing import item_int
+
 SUBPIXEL_BITS = 4
 SUBPIXEL_SCALE = 1 << SUBPIXEL_BITS
 MAX_DIM = 16384
 
-__all__ = ["MAX_DIM", "SUBPIXEL_BITS", "SUBPIXEL_SCALE", "pixel_center_fx", "to_screen"]
-
-
-def pixel_center_fx(i: int) -> int:
-    """Fixed-point coordinate of the centre of pixel ``i``."""
-    return i * SUBPIXEL_SCALE + SUBPIXEL_SCALE // 2
+__all__ = ["MAX_DIM", "SUBPIXEL_BITS", "SUBPIXEL_SCALE", "to_screen"]
 
 
 def to_screen(vertices: mx.array, width: int, height: int) -> tuple[mx.array, mx.array]:
@@ -50,6 +47,19 @@ def to_screen(vertices: mx.array, width: int, height: int) -> tuple[mx.array, mx
     x = (v[:, 0:1] / w_clip * 0.5 + 0.5) * (width - 1) + 0.5
     y = (0.5 + 0.5 * v[:, 1:2] / w_clip) * (height - 1) + 0.5
     z = v[:, 2:3] / w_clip * 0.49999 + 0.5
+
+    # A vertex with w == 0 (or any NaN clip-space input) gives x/w = NaN. Inf
+    # and int32-saturated coordinates are caught downstream by the magnitude
+    # guard in rasterize_triangles, but a NaN rounds and casts to fixed-point
+    # 0, landing inside every bound: it would rasterize a bogus triangle with
+    # no error, and NaN comparisons are false so the depth test would not
+    # reject it either. Catch it here, before it disappears into the cast.
+    if item_int(mx.any(mx.isnan(x)) | mx.any(mx.isnan(y))):
+        raise ValueError(
+            "projected vertex coordinates are not finite (NaN); this most "
+            "likely means a vertex has w == 0 in clip space. Clip triangles "
+            "against the near plane before rasterizing."
+        )
 
     fx = mx.round(x * SUBPIXEL_SCALE).astype(mx.int32)
     fy = mx.round(y * SUBPIXEL_SCALE).astype(mx.int32)

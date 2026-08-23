@@ -153,6 +153,23 @@ class TestChooseTiling:
     def test_budget_constant_matches_spec(self):
         assert MAX_PAIRS == 32 * 1024 * 1024
 
+    def test_int32_pair_count_overflow_still_raises(self):
+        """A true pair count past 2**31 must not silently wrap under budget.
+
+        One triangle spanning the whole 16384px screen touches 1024*1024 =
+        1,048,576 tiles at tile size 16. Broadcasting it across 4097 faces
+        (no distinct geometry, no GPU dispatch — this stays inside
+        choose_tiling/face_spans) gives a true total of 4,296,015,872 pairs.
+        Reduced in int32 that wraps to 1,048,576, which is comfortably under
+        MAX_PAIRS, so the pre-fix code returns success instead of raising.
+        """
+        width = height = 16384
+        s = 16
+        verts = mx.array([[0, 0], [(width - 1) * s, 0], [0, (height - 1) * s]], dtype=mx.int32)
+        faces = mx.broadcast_to(mx.array([[0, 1, 2]], dtype=mx.int32), (4097, 3))
+        with pytest.raises(MemoryError, match="tile"):
+            choose_tiling(verts, faces, width, height, "none")
+
 
 def _lists(verts, faces, width, height, tile_size):
     ts, bounds, n, total = choose_tiling(verts, faces, width, height, "none", tile_size=tile_size)

@@ -98,7 +98,13 @@ def rasterize_triangles(
             back to NDC first.
         occlusion_truncation: Depth threshold for occlusion.
         cull: Discard faces by orientation. ``"none"`` keeps everything, which
-            is the default and matches earlier releases.
+            is the default and matches earlier releases. A face is
+            front-facing when its vertices wind counter-clockwise in NDC
+            (equivalently, in the returned image's coordinate system, since
+            ``to_screen`` maps both axes monotonically increasing and does
+            not flip the winding) — the OpenGL convention. ``"back"``
+            discards clockwise faces and keeps counter-clockwise ones;
+            ``"front"`` does the reverse.
         return_depth: Also return the winning face's interpolated depth.
         _tile_size: Force the binning tile size. Private test hook — results are
             invariant to it.
@@ -163,6 +169,18 @@ def rasterize_triangles(
     tile_size, bounds, n_tiles, total_pairs = choose_tiling(
         verts_fx, faces, width, height, cull, tile_size=_tile_size
     )
+
+    if total_pairs == 0:
+        # Every face is degenerate, culled, or offscreen: nothing can be
+        # covered. The spec's failure-modes table asks for no dispatch here,
+        # matching the num_faces == 0 short-circuit above.
+        bg_faces = mx.zeros((height, width), dtype=mx.int32)
+        bg_bary = mx.zeros((height, width, 3), dtype=mx.float32)
+        if return_depth:
+            bg_depth = mx.full((height, width), float("inf"), dtype=mx.float32)
+            return bg_faces, bg_bary, bg_depth
+        return bg_faces, bg_bary
+
     tiles_x = (width + tile_size - 1) // tile_size
     tiles_y = (height + tile_size - 1) // tile_size
     sorted_faces, tile_starts = build_tile_lists(
