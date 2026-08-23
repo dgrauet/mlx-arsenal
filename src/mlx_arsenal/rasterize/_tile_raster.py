@@ -15,6 +15,17 @@ import mlx.core as mx
 RASTER_TILE = 16
 CHUNK = 256
 
+# CHUNK is passed to `threadgroup=` from Python below, but `sh_fid[256]`,
+# `base += 256` and `min(256, ...)` inside the Metal source string are
+# literals, not interpolated from CHUNK — same for RASTER_TILE's `16`s in
+# `sx * 16` / `tid % 16u`. Changing either constant here without also editing
+# the source string desyncs threadgroup size from shared-memory layout (e.g.
+# CHUNK=128 would leave half the threadgroup buffer stale) and produces
+# silently wrong pixels, not a crash. These assertions are a cheap tripwire
+# until the source string is f-string-interpolated in a follow-up.
+assert CHUNK == 256, "CHUNK must match the literal 256s hardcoded in _SOURCE"
+assert RASTER_TILE == 16, "RASTER_TILE must match the literal 16s hardcoded in _SOURCE"
+
 __all__ = ["RASTER_TILE", "raster_tiles"]
 
 _HEADER = """

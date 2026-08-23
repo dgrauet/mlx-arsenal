@@ -18,7 +18,7 @@ def _edge(
     ax: int, ay: int, bx: int, by: int, px: int | NDArray, py: int | NDArray
 ) -> int | NDArray:
     """Exact integer edge function for edge a->b evaluated at p."""
-    return (bx - ax) * (py - ay) - (by - ay) * (px - ax)  # type: ignore[return-value]
+    return (bx - ax) * (py - ay) - (by - ay) * (px - ax)
 
 
 def _is_top_left(ax: int, ay: int, bx: int, by: int) -> bool:
@@ -31,7 +31,7 @@ def _pixel_centres(width: int, height: int) -> tuple[NDArray, NDArray]:
     xs = np.arange(width, dtype=np.int64) * SUBPIXEL_SCALE + SUBPIXEL_SCALE // 2
     ys = np.arange(height, dtype=np.int64) * SUBPIXEL_SCALE + SUBPIXEL_SCALE // 2
     px, py = np.meshgrid(xs, ys)  # (H, W) each
-    return px, py  # type: ignore[return-value]
+    return px, py
 
 
 def _face_coverage(

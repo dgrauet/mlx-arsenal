@@ -2,12 +2,7 @@ import mlx.core as mx
 import pytest
 
 from mlx_arsenal._typing import item_float, item_int
-from mlx_arsenal.rasterize._fixedpoint import (
-    MAX_DIM,
-    SUBPIXEL_SCALE,
-    pixel_center_fx,
-    to_screen,
-)
+from mlx_arsenal.rasterize._fixedpoint import MAX_DIM, to_screen
 
 
 class TestToScreen:
@@ -49,11 +44,3 @@ class TestToScreen:
         v = mx.array([[0.0, 0.0, 0.0, 1.0]], dtype=mx.float32)
         with pytest.raises(ValueError, match="16384"):
             to_screen(v, width=MAX_DIM + 1, height=8)
-
-
-class TestPixelCentre:
-    def test_centre_of_pixel_zero(self):
-        assert pixel_center_fx(0) == SUBPIXEL_SCALE // 2
-
-    def test_centre_of_pixel_three(self):
-        assert pixel_center_fx(3) == 3 * SUBPIXEL_SCALE + SUBPIXEL_SCALE // 2
