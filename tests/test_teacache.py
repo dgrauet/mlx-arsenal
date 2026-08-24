@@ -133,3 +133,21 @@ class TestArbitraryPayloadCache:
         assert retrieved is payload  # exact identity, not a copy
         assert mx.allclose(retrieved["cond"][0], mx.array([1.0])).item()
         assert mx.allclose(retrieved["uncond"][1], mx.array([4.0])).item()
+
+
+class TestConstructorAndStepValidation:
+    def test_nonpositive_num_steps_raises(self):
+        with pytest.raises(ValueError):
+            make_controller(num_steps=0)
+
+    def test_negative_threshold_raises(self):
+        with pytest.raises(ValueError):
+            make_controller(rel_l1_thresh=-0.1)
+
+    def test_out_of_range_step_index_raises(self):
+        c = make_controller(num_steps=4)
+        x = mx.ones((1, 4))
+        with pytest.raises(ValueError):
+            c.should_compute(4, x)
+        with pytest.raises(ValueError):
+            c.should_compute(-1, x)

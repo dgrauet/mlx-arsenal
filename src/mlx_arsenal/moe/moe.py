@@ -19,6 +19,10 @@ class MoEGate(nn.Module):
 
     def __init__(self, hidden_size: int, num_experts: int, top_k: int):
         super().__init__()
+        if num_experts <= 0:
+            raise ValueError(f"num_experts must be > 0, got {num_experts}")
+        if not 0 < top_k <= num_experts:
+            raise ValueError(f"top_k must be in [1, num_experts={num_experts}], got {top_k}")
         self.num_experts = num_experts
         self.top_k = top_k
         self.gate = nn.Linear(hidden_size, num_experts, bias=False)

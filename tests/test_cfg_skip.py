@@ -216,3 +216,11 @@ class TestCFGSkipController:
         ctrl = CFGSkipController(sched)
         assert ctrl.num_blocks == 2
         assert ctrl.num_heads == 3
+
+
+def test_cfg_head_similarity_fp16_no_overflow():
+    # Reductions must run in float32: summing 64*64 fp16 values of 8.0
+    # overflows fp16 (max 65504) and returns nan for identical inputs.
+    a = mx.full((1, 2, 64, 64), 8.0, dtype=mx.float16)
+    sim = cfg_head_similarity(a, a)
+    assert mx.allclose(sim, mx.ones((2,)), atol=1e-3).item()

@@ -120,6 +120,11 @@ class DDIMScheduler:
         """Recompute the timestep schedule for ``num_inference_steps`` steps."""
         if num_inference_steps <= 0:
             raise ValueError(f"num_inference_steps must be positive, got {num_inference_steps}")
+        if num_inference_steps > self.num_train_timesteps:
+            raise ValueError(
+                f"num_inference_steps ({num_inference_steps}) cannot exceed "
+                f"num_train_timesteps ({self.num_train_timesteps})"
+            )
         self.num_inference_steps = num_inference_steps
 
         if self.timestep_spacing == "trailing":
@@ -141,10 +146,21 @@ class DDIMScheduler:
         return self._timesteps
 
     def _prev_timestep(self, timestep: int) -> int:
-        if self.timestep_spacing == "trailing":
-            step_ratio = self.num_train_timesteps / self.num_inference_steps
-            return int(timestep - step_ratio)
-        step_ratio = self.num_train_timesteps // self.num_inference_steps
+        # Look the timestep up in the actual schedule so ``prev`` is always
+        # the next scheduled entry (recomputing from the step ratio drifts
+        # from the rounded schedule by one for some step counts).
+        schedule = [item_int(t) for t in self._timesteps]
+        try:
+            i = schedule.index(timestep)
+        except ValueError:
+            raise ValueError(
+                f"timestep {timestep} is not in the current schedule; "
+                f"iterate over scheduler.timesteps (or call set_timesteps())."
+            ) from None
+        if i + 1 < len(schedule):
+            return schedule[i + 1]
+        # Past the last scheduled step: extrapolate one spacing below.
+        step_ratio = max(1, round(self.num_train_timesteps / self.num_inference_steps))
         return timestep - step_ratio
 
     def step(

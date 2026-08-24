@@ -479,3 +479,19 @@ def test_large_mesh_completes():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestDepthPriorValidation:
+    def test_wrong_shape_prior_raises(self):
+        width, height = 16, 16
+        vertices, faces = _make_triangle_mesh(
+            [
+                _clip_vertex(-0.5, -0.5, 0.5),
+                _clip_vertex(0.5, -0.5, 0.5),
+                _clip_vertex(0.0, 0.5, 0.5),
+            ],
+            [[0, 1, 2]],
+        )
+        bad = mx.zeros((height + 1, width), dtype=mx.float32)
+        with pytest.raises(ValueError):
+            rasterize_triangles(vertices, faces, width, height, depth_prior=bad)

@@ -95,8 +95,10 @@ class FlowMatchEulerDiscreteScheduler:
     then step through timesteps calling ``step`` with the model's velocity output.
     ``add_noise`` forward-interpolates a clean sample toward pure noise.
 
-    Convention: sigmas ascend from ~0 (clean) to 1 (noise), with a terminal
-    ``1.0`` appended so the final step has a valid ``sigma_next``.
+    Convention (diffusers parity): sigmas descend from 1 (noise) to ~0
+    (clean), with a terminal ``0.0`` appended so the final step has a valid
+    ``sigma_next``. ``step`` therefore moves the sample toward the clean
+    manifold when given the flow-matching velocity ``noise - x0``.
 
     Args:
         num_train_timesteps: Number of training timesteps.
@@ -118,12 +120,12 @@ class FlowMatchEulerDiscreteScheduler:
 
         Args:
             num_inference_steps: Number of denoising steps.
-            sigmas: Optional custom sigmas (ascending, ``[0,1]``). If omitted,
-                a linspace schedule is generated.
+            sigmas: Optional custom sigmas (descending, ``[0,1]``). If
+                omitted, a linspace schedule is generated.
         """
         if sigmas is None:
             timesteps = np.linspace(
-                1, self.num_train_timesteps, num_inference_steps, dtype=np.float32
+                self.num_train_timesteps, 1, num_inference_steps, dtype=np.float32
             )
             sigmas = timesteps / self.num_train_timesteps
         else:
@@ -134,7 +136,7 @@ class FlowMatchEulerDiscreteScheduler:
 
         self.timesteps = array_from_any(timesteps, dtype=mx.float32)
         self.sigmas = array_from_any(
-            np.concatenate([sigmas, np.ones(1, dtype=np.float32)]), dtype=mx.float32
+            np.concatenate([sigmas, np.zeros(1, dtype=np.float32)]), dtype=mx.float32
         )
         self.num_inference_steps = num_inference_steps
         self._step_index = None
@@ -155,6 +157,11 @@ class FlowMatchEulerDiscreteScheduler:
             raise RuntimeError("set_timesteps() must be called before step()")
         if self._step_index is None:
             self._step_index = 0
+        if self._step_index >= self.sigmas.shape[0] - 1:
+            raise RuntimeError(
+                f"step() called more than num_inference_steps="
+                f"{self.num_inference_steps} times; call set_timesteps() to reset."
+            )
 
         sigma = self.sigmas[self._step_index]
         sigma_next = self.sigmas[self._step_index + 1]

@@ -229,3 +229,22 @@ class TestRoPECrossAttentionSemantics:
         dot_5 = item_float((q_at_5 * q_same[None, :, :]).sum())
         # The two dot products should differ — RoPE encoded position.
         assert abs(dot_0 - dot_5) > 1e-3
+
+
+class TestApplyRotaryEmbSeqAxis:
+    def test_ambiguous_seq_axis_raises(self):
+        # batch == seq: the axis-length heuristic cannot know which axis is
+        # the sequence, and silently picking the first (batch) corrupts the
+        # rotation. It must fail loudly instead.
+        x = mx.random.normal((4, 4, 2, 8))
+        cos, sin = rope_frequencies_1d(dim=8, positions=mx.arange(4, dtype=mx.float32))
+        with pytest.raises(ValueError):
+            apply_rotary_emb(x, cos, sin)
+
+    def test_explicit_seq_axis_matches_per_sample(self):
+        x = mx.random.normal((4, 4, 2, 8))
+        cos, sin = rope_frequencies_1d(dim=8, positions=mx.arange(4, dtype=mx.float32))
+        out = apply_rotary_emb(x, cos, sin, seq_axis=1)
+        for b in range(4):
+            per_sample = apply_rotary_emb(x[b], cos, sin)
+            assert mx.allclose(out[b], per_sample, atol=1e-6).item()

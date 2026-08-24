@@ -219,7 +219,8 @@ class PerHeadAttentionCache:
             raise ValueError(
                 f"input must have head axis 1 of size {self.num_heads}, got shape {x.shape}"
             )
-        abs_x = mx.abs(x)
+        # float32 reduction: fp16 accumulation overflows for large tensors.
+        abs_x = mx.abs(x).astype(mx.float32)
         reduce_axes = tuple(i for i in range(x.ndim) if i != 1)
         return mx.mean(abs_x, axis=reduce_axes)
 
