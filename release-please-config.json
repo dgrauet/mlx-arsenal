@@ -15,7 +15,8 @@
           "path": "pyproject.toml",
           "jsonpath": "$.project.version"
         }
-      ]
+      ],
+      "release-as": "0.12.0"
     }
   }
 }
