@@ -51,6 +51,10 @@ class TeaCacheController:
         rel_l1_thresh: float,
         coefficients: Sequence[float],
     ):
+        if num_steps < 1:
+            raise ValueError(f"num_steps must be >= 1, got {num_steps}")
+        if rel_l1_thresh < 0:
+            raise ValueError(f"rel_l1_thresh must be >= 0, got {rel_l1_thresh}")
         self.num_steps = num_steps
         self.rel_l1_thresh = rel_l1_thresh
         self.coefficients = list(coefficients)
@@ -71,6 +75,8 @@ class TeaCacheController:
         Side-effects: advances the stored ``previous_modulated_input`` and the
         internal accumulator. Must be called once per step in order.
         """
+        if step_index < 0 or step_index >= self.num_steps:
+            raise ValueError(f"step_index must be in [0, {self.num_steps}), got {step_index}")
         if step_index == 0 or step_index == self.num_steps - 1:
             self._accumulated = 0.0
             self._prev_modulated_input = modulated_input

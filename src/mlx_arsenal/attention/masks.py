@@ -17,7 +17,14 @@ def causal_mask(
 
     Returns:
         Mask of shape (1, 1, seq_len, offset + seq_len).
+
+    Raises:
+        ValueError: if ``seq_len`` is not positive or ``offset`` is negative.
     """
+    if seq_len <= 0:
+        raise ValueError(f"seq_len must be > 0, got {seq_len}")
+    if offset < 0:
+        raise ValueError(f"offset must be >= 0, got {offset}")
     total = offset + seq_len
     mask = mx.full((seq_len, total), float("-inf"), dtype=dtype)
     rows = mx.arange(seq_len)
@@ -47,7 +54,18 @@ def sliding_window_mask(
 
     Returns:
         Mask of shape (1, 1, seq_len, offset + seq_len).
+
+    Raises:
+        ValueError: if ``seq_len`` or ``window_size`` is not positive, or
+            ``offset`` is negative (a non-positive window would produce
+            all ``-inf`` rows and NaN softmax downstream).
     """
+    if seq_len <= 0:
+        raise ValueError(f"seq_len must be > 0, got {seq_len}")
+    if window_size <= 0:
+        raise ValueError(f"window_size must be > 0, got {window_size}")
+    if offset < 0:
+        raise ValueError(f"offset must be >= 0, got {offset}")
     total = offset + seq_len
     mask = mx.full((seq_len, total), float("-inf"), dtype=dtype)
     rows = mx.arange(seq_len)

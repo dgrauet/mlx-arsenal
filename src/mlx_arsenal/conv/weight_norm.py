@@ -39,13 +39,17 @@ class WeightNorm(nn.Module):
         return self.g * (self.v / norm)
 
     def __call__(self, x: mx.array, *args, **kwargs) -> mx.array:
-        # Temporarily set the normalized weight on the module
+        # Temporarily set the normalized weight on the module. Assignment goes
+        # through ``nn.Module.__setattr__`` (never ``__dict__``, which would
+        # permanently shadow the parameter and break ``update()`` /
+        # ``load_weights()``), and is restored even if the module raises.
         w = self._compute_weight()
         original = getattr(self.module, self.weight_name)
-        self.module.__dict__[self.weight_name] = w
-        result = self.module(x, *args, **kwargs)
-        self.module.__dict__[self.weight_name] = original
-        return result
+        setattr(self.module, self.weight_name, w)
+        try:
+            return self.module(x, *args, **kwargs)
+        finally:
+            setattr(self.module, self.weight_name, original)
 
 
 def weight_norm(module: nn.Module, weight_name: str = "weight", dim: int = 0) -> WeightNorm:

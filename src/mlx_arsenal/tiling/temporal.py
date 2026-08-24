@@ -40,6 +40,11 @@ def temporal_slice_process(
     Returns:
         Processed tensor with the same temporal length as fn(x) would produce.
     """
+    if not 0 <= overlap < window_size:
+        raise ValueError(
+            f"overlap ({overlap}) must be in [0, window_size) (window_size={window_size})"
+        )
+
     T = x.shape[temporal_dim]
 
     if T <= window_size:

@@ -1,5 +1,6 @@
 import mlx.core as mx
 import mlx.nn as nn
+import pytest
 
 from mlx_arsenal.moe import MoEGate, MoELayer
 
@@ -152,3 +153,17 @@ class TestMoELayer:
         x = mx.random.normal((2, 5, hidden), dtype=mx.float16)
         y = layer(x)
         assert y.dtype == mx.float16
+
+
+class TestMoEGateValidation:
+    def test_top_k_greater_than_num_experts_raises(self):
+        with pytest.raises(ValueError):
+            MoEGate(hidden_size=4, num_experts=3, top_k=5)
+
+    def test_nonpositive_top_k_raises(self):
+        with pytest.raises(ValueError):
+            MoEGate(hidden_size=4, num_experts=3, top_k=0)
+
+    def test_nonpositive_num_experts_raises(self):
+        with pytest.raises(ValueError):
+            MoEGate(hidden_size=4, num_experts=0, top_k=1)
