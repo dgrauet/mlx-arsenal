@@ -195,6 +195,7 @@ def apply_rotary_emb(
     sin: mx.array,
     *,
     interleaved: bool = True,
+    seq_axis: int | None = None,
 ) -> mx.array:
     """Apply RoPE rotation to ``x``.
 
@@ -211,16 +212,24 @@ def apply_rotary_emb(
         sin: ``(S, D // 2)`` sines.
         interleaved: See :func:`rotate_half`. Defaults to ``True``
             (RoPE-paper convention).
+        seq_axis: Axis of ``x`` that carries the sequence. When ``None``
+            (default) the unique axis whose length matches ``cos.shape[0]``
+            is used; if more than one axis matches (e.g. batch == seq), a
+            ``ValueError`` asks for an explicit ``seq_axis``.
 
     Returns:
         Rotated tensor, same shape as ``x``.
+
+    Raises:
+        ValueError: if no axis (or, with ``seq_axis=None``, more than one
+            axis) of ``x`` matches the frequency table's sequence length.
     """
     full_cos, full_sin = _expand_freqs(cos, sin, interleaved=interleaved)
     # Reshape (S, D) → broadcast against x. x has ``S`` on some axis
     # before the last — broadcasting handles any (..., S, ..., D) shape
     # as long as S matches.
-    full_cos = _broadcast_for(full_cos, x)
-    full_sin = _broadcast_for(full_sin, x)
+    full_cos = _broadcast_for(full_cos, x, seq_axis=seq_axis)
+    full_sin = _broadcast_for(full_sin, x, seq_axis=seq_axis)
 
     x_f = x.astype(mx.float32)
     out = x_f * full_cos + rotate_half(x_f, interleaved=interleaved) * full_sin
@@ -243,21 +252,35 @@ def _interleave_duplicate(t: mx.array) -> mx.array:
     return mx.reshape(expanded, (*t.shape[:-1], -1))
 
 
-def _broadcast_for(freq: mx.array, x: mx.array) -> mx.array:
+def _broadcast_for(freq: mx.array, x: mx.array, *, seq_axis: int | None = None) -> mx.array:
     """Reshape ``(S, D)`` freq to broadcast against the seq + head dims of ``x``.
 
     Inserts singleton dims for every non-seq, non-head axis. The
     convention is: ``S`` is the axis of ``x`` whose length matches
-    ``freq.shape[0]``; ``D`` is the last axis of ``x``.
+    ``freq.shape[0]``; ``D`` is the last axis of ``x``. When several axes
+    match ``S`` the caller must disambiguate with ``seq_axis``.
     """
     s, d = freq.shape
     if x.shape[-1] != d:
         raise ValueError(f"expected x.shape[-1]={d}, got {x.shape[-1]}")
-    # Find the axis matching the sequence length.
-    candidates = [i for i, dim in enumerate(x.shape[:-1]) if dim == s]
-    if not candidates:
-        raise ValueError(f"no axis of x with shape={s} (got x.shape={tuple(x.shape)})")
-    seq_axis = candidates[0]
+    if seq_axis is not None:
+        seq_axis = seq_axis % x.ndim
+        if x.shape[seq_axis] != s:
+            raise ValueError(
+                f"x.shape[{seq_axis}]={x.shape[seq_axis]} does not match "
+                f"the frequency table's sequence length {s}"
+            )
+    else:
+        # Find the axis matching the sequence length.
+        candidates = [i for i, dim in enumerate(x.shape[:-1]) if dim == s]
+        if not candidates:
+            raise ValueError(f"no axis of x with shape={s} (got x.shape={tuple(x.shape)})")
+        if len(candidates) > 1 and s > 1:
+            raise ValueError(
+                f"ambiguous sequence axis: axes {candidates} of x all have "
+                f"length {s} (x.shape={tuple(x.shape)}); pass seq_axis= explicitly"
+            )
+        seq_axis = candidates[0]
     target_shape = [1] * x.ndim
     target_shape[seq_axis] = s
     target_shape[-1] = d

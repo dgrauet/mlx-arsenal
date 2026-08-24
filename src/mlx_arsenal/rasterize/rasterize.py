@@ -129,6 +129,11 @@ def rasterize_triangles(
         raise ValueError(
             f"rasterize supports images up to {MAX_DIM}px per axis; got {width}x{height}"
         )
+    if depth_prior is not None and tuple(depth_prior.shape) != (height, width):
+        raise ValueError(
+            f"depth_prior must have shape (height, width) = ({height}, {width}), "
+            f"got {tuple(depth_prior.shape)}"
+        )
 
     num_faces = faces.shape[0]
     if num_faces > 0:

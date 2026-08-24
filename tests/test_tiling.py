@@ -1,6 +1,7 @@
 """Tests for tiling module."""
 
 import mlx.core as mx
+import pytest
 
 from mlx_arsenal.tiling import temporal_slice_process, tiled_process
 
@@ -59,3 +60,19 @@ class TestTemporalSliceProcess:
         out = temporal_slice_process(x, fn=lambda t: t, window_size=8, overlap=2)
         assert out.shape == (1, 30, 4, 4, 3)
         assert mx.allclose(out, x, atol=1e-4).item()
+
+
+def test_tiled_process_non_square_axis_smaller_than_tile():
+    # One spatial axis fits inside a single tile, the other needs tiling.
+    x = mx.ones((1, 32, 8, 3))
+    out = tiled_process(x, lambda t: t, tile_size=16, overlap=4)
+    assert out.shape == x.shape
+    assert mx.allclose(out, x, atol=1e-5).item()
+
+
+def test_temporal_overlap_ge_window_raises():
+    x = mx.ones((1, 32, 4, 4, 3))
+    with pytest.raises(ValueError):
+        temporal_slice_process(x, lambda t: t, window_size=8, overlap=8)
+    with pytest.raises(ValueError):
+        temporal_slice_process(x, lambda t: t, window_size=8, overlap=9)

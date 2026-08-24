@@ -132,16 +132,17 @@ class TestFlowMatchEulerDiscreteScheduler:
         assert sched.timesteps is not None
         out = sched.step(velocity, sched.timesteps[0], sample)
         assert sched._step_index == 1
-        # sigma_next > sigma for ascending schedule, so update is positive
-        assert (out > sample).all().item()
+        # sigma_next < sigma for the descending (diffusers) schedule, so the
+        # update with a positive velocity is negative.
+        assert (out < sample).all().item()
 
     def test_custom_sigmas_accepted(self):
         sched = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
-        sched.set_timesteps(num_inference_steps=3, sigmas=[0.1, 0.5, 0.9])
-        # 3 sigmas + terminal 1.0 = 4
+        sched.set_timesteps(num_inference_steps=3, sigmas=[0.9, 0.5, 0.1])
+        # 3 sigmas + terminal 0.0 = 4
         assert sched.sigmas is not None
         assert sched.sigmas.shape == (4,)
-        assert sched.sigmas[-1].item() == pytest.approx(1.0)
+        assert sched.sigmas[-1].item() == pytest.approx(0.0)
 
 
 class TestEulerStep:
@@ -343,3 +344,75 @@ class TestDDIMScheduler:
         out = sched.add_noise(original, noise, t)
         expected = mx.sqrt(1.0 - sched.alphas_cumprod[t]) * noise
         assert mx.allclose(out, expected).item()
+
+
+class TestFlowMatchDiffusersParity:
+    def test_sigmas_descend_with_terminal_zero(self):
+        sched = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
+        sched.set_timesteps(num_inference_steps=4)
+        assert sched.sigmas is not None
+        sigmas = [item_float(s) for s in sched.sigmas]
+        assert sigmas[0] == pytest.approx(1.0)
+        assert sigmas[-1] == 0.0
+        assert all(a > b for a, b in zip(sigmas[:-1], sigmas[1:], strict=False))
+
+    def test_timesteps_descend(self):
+        sched = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
+        sched.set_timesteps(num_inference_steps=4)
+        assert sched.timesteps is not None
+        ts = [item_float(t) for t in sched.timesteps]
+        assert all(a > b for a, b in zip(ts[:-1], ts[1:], strict=False))
+
+    def test_euler_loop_recovers_clean_sample(self):
+        # The flow-matching path is x(sigma) = sigma * noise + (1 - sigma) * x0,
+        # whose velocity (noise - x0) is constant. Exact Euler integration from
+        # pure noise (sigma = 1) must therefore land exactly on x0 (sigma = 0).
+        sched = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
+        sched.set_timesteps(num_inference_steps=8)
+        x0 = mx.arange(8, dtype=mx.float32).reshape(1, 8) / 8.0
+        noise = mx.ones((1, 8)) * 3.0
+        velocity = noise - x0
+        x = noise
+        assert sched.timesteps is not None
+        for t in sched.timesteps:
+            x = sched.step(velocity, t, x)
+        assert mx.allclose(x, x0, atol=1e-5).item()
+
+    def test_step_past_end_raises(self):
+        sched = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
+        sched.set_timesteps(num_inference_steps=2)
+        x = mx.zeros((1, 4))
+        v = mx.ones((1, 4))
+        assert sched.timesteps is not None
+        x = sched.step(v, sched.timesteps[0], x)
+        x = sched.step(v, sched.timesteps[1], x)
+        with pytest.raises(RuntimeError):
+            sched.step(v, sched.timesteps[1], x)
+
+
+class TestDDIMScheduleConsistency:
+    def test_prev_timestep_matches_schedule_trailing(self):
+        sched = DDIMScheduler(num_inference_steps=7, timestep_spacing="trailing")
+        ts = [item_int(t) for t in sched.timesteps]
+        for cur, nxt in zip(ts[:-1], ts[1:], strict=False):
+            assert sched._prev_timestep(cur) == nxt
+
+    def test_prev_timestep_matches_schedule_leading(self):
+        sched = DDIMScheduler(num_inference_steps=7, timestep_spacing="leading")
+        ts = [item_int(t) for t in sched.timesteps]
+        for cur, nxt in zip(ts[:-1], ts[1:], strict=False):
+            assert sched._prev_timestep(cur) == nxt
+
+    def test_step_with_timestep_outside_schedule_raises(self):
+        sched = DDIMScheduler(num_inference_steps=8)
+        x = mx.zeros((1, 4))
+        eps = mx.zeros((1, 4))
+        with pytest.raises(ValueError):
+            sched.step(eps, 5000, x)
+
+    def test_more_inference_than_train_steps_raises(self):
+        with pytest.raises(ValueError):
+            DDIMScheduler(num_train_timesteps=10, num_inference_steps=20)
+        sched = DDIMScheduler(num_train_timesteps=10, num_inference_steps=5)
+        with pytest.raises(ValueError):
+            sched.set_timesteps(20)

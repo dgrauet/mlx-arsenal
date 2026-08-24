@@ -30,7 +30,9 @@ class FourierEmbedder(nn.Module):
         frequencies = 2.0 ** mx.arange(num_freqs)
         if include_pi:
             frequencies = frequencies * mx.array(3.141592653589793)
-        self.frequencies = frequencies
+        # Underscore prefix: fixed buffer, excluded from parameters() so
+        # optimizers and strict checkpoint loading never see it.
+        self._frequencies = frequencies
         self.out_dim = input_dim * (2 * num_freqs + (1 if include_input else 0))
 
     def __call__(self, x: mx.array) -> mx.array:
@@ -44,7 +46,7 @@ class FourierEmbedder(nn.Module):
         """
         # x: (..., D), frequencies: (F,)
         # embed: (..., D, F)
-        embed = x[..., None] * self.frequencies
+        embed = x[..., None] * self._frequencies
         # Flatten last two dims: (..., D*F)
         embed = embed.reshape(*x.shape[:-1], -1)
         parts = []

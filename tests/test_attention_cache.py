@@ -172,3 +172,11 @@ class TestSpliceHeads:
             splice_heads(new, cached, mx.array([[True], [False], [True]]))
         with pytest.raises(ValueError):
             splice_heads(new, cached, mx.array([1, 0, 1]))  # not bool
+
+
+def test_per_head_reduce_fp16_no_overflow():
+    cache = PerHeadAttentionCache(num_heads=2, num_steps=4, rel_l1_thresh=0.5)
+    x = mx.full((1, 2, 64, 64), 100.0, dtype=mx.float16)
+    reduced = cache._reduce_per_head(x)
+    # mean(|x|) is exactly 100; an fp16 sum would overflow to inf first.
+    assert mx.allclose(reduced, mx.full((2,), 100.0), atol=1e-2).item()

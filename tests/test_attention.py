@@ -389,3 +389,21 @@ class TestVerticalStripeMask:
     def test_validation_thw(self):
         with pytest.raises(ValueError):
             vertical_stripe_mask(T=0, H=2, W=2, key_indices=mx.array([0]))
+
+
+class TestMaskValidation:
+    def test_sliding_window_nonpositive_window_raises(self):
+        with pytest.raises(ValueError):
+            sliding_window_mask(seq_len=4, window_size=0)
+        with pytest.raises(ValueError):
+            sliding_window_mask(seq_len=4, window_size=-1)
+
+    def test_causal_mask_nonpositive_seq_len_raises(self):
+        with pytest.raises(ValueError):
+            causal_mask(seq_len=0)
+
+    def test_negative_offset_raises(self):
+        with pytest.raises(ValueError):
+            causal_mask(seq_len=4, offset=-1)
+        with pytest.raises(ValueError):
+            sliding_window_mask(seq_len=4, window_size=2, offset=-1)

@@ -67,8 +67,10 @@ def tiled_process(
     slices_0[dim_w] = slice(w_starts[0], w_starts[0] + tile_size)
     sample_out = fn(x[tuple(slices_0)])
 
-    scale_h = sample_out.shape[dim_h] / tile_size
-    scale_w = sample_out.shape[dim_w] / tile_size
+    # The first tile's input slice is min(tile_size, dim) long — scaling by
+    # tile_size alone breaks any axis that fits inside a single tile.
+    scale_h = sample_out.shape[dim_h] / min(tile_size, H)
+    scale_w = sample_out.shape[dim_w] / min(tile_size, W)
 
     out_H = int(H * scale_h)
     out_W = int(W * scale_w)

@@ -65,8 +65,10 @@ def cfg_head_similarity(
         )
     num_heads = cond.shape[1]
     # Flatten to (num_heads, K) where K = B * S * D (and any trailing axes).
-    cond_h = mx.swapaxes(cond, 0, 1).reshape(num_heads, -1)
-    uncond_h = mx.swapaxes(uncond, 0, 1).reshape(num_heads, -1)
+    # Reduce in float32: fp16 accumulation overflows for realistic
+    # activation magnitudes (sum of B*S*D values).
+    cond_h = mx.swapaxes(cond, 0, 1).reshape(num_heads, -1).astype(mx.float32)
+    uncond_h = mx.swapaxes(uncond, 0, 1).reshape(num_heads, -1).astype(mx.float32)
     if metric == "cosine":
         dot = mx.sum(cond_h * uncond_h, axis=1)
         c_norm = mx.sqrt(mx.sum(cond_h * cond_h, axis=1))
