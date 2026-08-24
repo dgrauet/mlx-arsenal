@@ -62,3 +62,19 @@ def test_output_matches_manual_computation():
     out = emb(x)
     expected = mx.array([[0.5, math.sin(0.5), math.sin(1.0), math.cos(0.5), math.cos(1.0)]])
     assert mx.allclose(out, expected, atol=1e-6).item()
+
+
+class TestFourierEmbedderNoInput:
+    def test_out_dim_without_input(self):
+        emb = FourierEmbedder(num_freqs=4, input_dim=3, include_input=False)
+        assert emb.out_dim == 3 * 2 * 4  # 24
+        x = mx.random.normal((5, 3))
+        assert emb(x).shape == (5, 24)
+
+    def test_output_is_sin_cos_only(self):
+        """Output is exactly [sin(x*f), cos(x*f)] with no raw-input block."""
+        emb = FourierEmbedder(num_freqs=2, input_dim=1, include_pi=False, include_input=False)
+        x = mx.array([[0.5]])
+        out = emb(x)
+        expected = mx.array([[math.sin(0.5), math.sin(1.0), math.cos(0.5), math.cos(1.0)]])
+        assert mx.allclose(out, expected, atol=1e-6).item()

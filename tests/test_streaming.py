@@ -164,6 +164,35 @@ class TestBlockStreamerLora:
         d = src.get_block_lora_dict(3)
         assert set(d.keys()) == {"linear.lora_A.weight", "linear.lora_B.weight"}
 
+    def test_key_mapper_returning_none_drops_key(self, tmp_path):
+        # Keys the mapper maps to None must be dropped even when the raw
+        # key already matches the block prefix.
+        lora_sd = {
+            "b.0.linear.lora_A.weight": mx.ones((2, 4)),
+            "b.0.linear.lora_B.weight": mx.ones((4, 2)),
+            "b.1.linear.lora_A.weight": mx.ones((2, 4)),
+            "b.1.linear.lora_B.weight": mx.ones((4, 2)),
+        }
+        lora_path = _save_safetensors(tmp_path, "lora", lora_sd)
+
+        def drop_block_1(k: str) -> str | None:
+            return None if k.startswith("b.1.") else k
+
+        src = BlockLoraSource(lora_path, block_prefix="b.", key_mapper=drop_block_1)
+        assert src.has_block(0)
+        assert not src.has_block(1)
+        assert src.get_block_lora_dict(1) == {}
+
+    def test_key_mapper_returning_none_for_all_keys_yields_no_blocks(self, tmp_path):
+        lora_sd = {
+            "b.0.linear.lora_A.weight": mx.ones((2, 4)),
+            "b.0.linear.lora_B.weight": mx.ones((4, 2)),
+        }
+        lora_path = _save_safetensors(tmp_path, "lora", lora_sd)
+        src = BlockLoraSource(lora_path, block_prefix="b.", key_mapper=lambda _k: None)
+        assert not src.has_block(0)
+        assert src.get_block_lora_dict(0) == {}
+
     def test_key_mapper_remaps_lora_keys(self, tmp_path):
         # Raw safetensors uses an upstream naming; key_mapper rewrites
         # to the model's "b.<idx>." prefix.
@@ -188,6 +217,23 @@ class TestBlockStreamerClose:
         streamer = BlockStreamer(path, block_prefix="b.")
         streamer.close()
         assert streamer.block_count == 0
+
+
+class TestBlockLoraSourceClose:
+    def test_close_makes_source_report_no_blocks(self, tmp_path):
+        # Contract: "After this the source is unusable." — the implementation
+        # degrades safely rather than raising: has_block goes False and
+        # get_block_lora_dict returns {}, so a fuser sees no deltas.
+        lora_sd = {
+            "b.0.linear.lora_A.weight": mx.ones((2, 4)),
+            "b.0.linear.lora_B.weight": mx.ones((4, 2)),
+        }
+        lora_path = _save_safetensors(tmp_path, "lora", lora_sd)
+        src = BlockLoraSource(lora_path, block_prefix="b.")
+        assert src.has_block(0)
+        src.close()
+        assert not src.has_block(0)
+        assert src.get_block_lora_dict(0) == {}
 
 
 class TestNonDictLoadRaises:

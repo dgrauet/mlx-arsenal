@@ -248,3 +248,118 @@ class TestStateDict:
         sd = StateDict(sd={"a": mx.ones((4, 4))}, size=64, dtype={mx.float32})
         with pytest.raises((AttributeError, Exception)):
             sd.size = 999  # ty: ignore[invalid-assignment]
+
+
+class TestSDOpsKeyPrefixGatedOperation:
+    """kv-operations gated by key *prefix* (existing tests only use suffix)."""
+
+    @staticmethod
+    def _double(tensor_key: str, tensor_value: mx.array) -> list[KeyValueOperationResult]:
+        return [KeyValueOperationResult(tensor_key, tensor_value * 2)]
+
+    def test_prefix_match_fires_operation(self):
+        ops = SDOps("p").with_matching().with_kv_operation(self._double, key_prefix="attn.")
+        arr = mx.ones((4,))
+        pairs = ops.apply_to_key_value("attn.q.weight", arr)
+        assert len(pairs) == 1
+        assert pairs[0].new_key == "attn.q.weight"
+        assert mx.allclose(pairs[0].new_value, mx.ones((4,)) * 2).item()
+
+    def test_prefix_mismatch_passes_through(self):
+        ops = SDOps("p").with_matching().with_kv_operation(self._double, key_prefix="attn.")
+        arr = mx.ones((4,))
+        pairs = ops.apply_to_key_value("mlp.fc1.weight", arr)
+        assert pairs == [KeyValueOperationResult("mlp.fc1.weight", arr)]
+
+
+class TestAllowedKeysKvOperationOrder:
+    """Interaction between allowed_keys and kv-operations at load time.
+
+    The loader (safetensors_loader.py) runs ``apply_to_key`` first — which
+    applies the allowed_keys filter — and only then ``apply_to_key_value``
+    on the surviving key. So allowed_keys gates the *raw* (post-replacement)
+    key, and the keys a kv-op *produces* are never checked against
+    allowed_keys.
+    """
+
+    def test_kv_op_output_keys_bypass_allowed_keys(self, tmp_path):
+        # The raw key is allowed; the split outputs are NOT in allowed_keys
+        # but still land in the state dict, per the documented order.
+        path = _save(tmp_path, "w", {"attn.qkv.weight": mx.ones((6, 4))})
+        ops = (
+            SDOps("split")
+            .with_matching()
+            .with_additional_allowed_keys(frozenset({"attn.qkv.weight"}))
+            .with_kv_operation(_split_qkv, key_suffix=".qkv.weight")
+        )
+        sd = SafetensorsStateDictLoader().load(path, sd_ops=ops)
+        assert set(sd.sd) == {"attn.q.weight", "attn.k.weight", "attn.v.weight"}
+
+    def test_allowed_keys_drops_raw_key_before_kv_op(self, tmp_path):
+        # allowed_keys only names a key the kv-op WOULD produce; the raw key
+        # is filtered out before the kv-op ever runs, so the load yields
+        # nothing — the filter cannot be satisfied by kv-op outputs.
+        path = _save(tmp_path, "w", {"attn.qkv.weight": mx.ones((6, 4))})
+        ops = (
+            SDOps("split")
+            .with_matching()
+            .with_additional_allowed_keys(frozenset({"attn.q.weight"}))
+            .with_kv_operation(_split_qkv, key_suffix=".qkv.weight")
+        )
+        sd = SafetensorsStateDictLoader().load(path, sd_ops=ops)
+        assert sd.sd == {}
+        assert sd.size == 0
+
+
+class TestMultiShardOverwrite:
+    def test_later_shard_wins_for_shared_key(self, tmp_path):
+        first = mx.ones((2, 2), dtype=mx.float32)
+        second = mx.full((2, 2), 7.0, dtype=mx.float16)
+        p1 = _save(tmp_path, "s1", {"a": first, "only1": mx.zeros((3,))})
+        p2 = _save(tmp_path, "s2", {"a": second})
+        sd = SafetensorsStateDictLoader().load([p1, p2])
+
+        # dict.update semantics: the later shard's value wins.
+        assert set(sd.sd) == {"a", "only1"}
+        assert sd.sd["a"].dtype == mx.float16
+        assert mx.allclose(sd.sd["a"].astype(mx.float32), mx.full((2, 2), 7.0)).item()
+
+        # Size/dtype accounting is per tensor *seen*, not per key kept: the
+        # overwritten first-shard "a" still counts toward size and its dtype
+        # stays in the set. Surprising, but it is what the loader does
+        # (size += val.nbytes runs before the dict assignment, unconditionally).
+        only1 = sd.sd["only1"]
+        assert sd.size == first.nbytes + second.nbytes + only1.nbytes
+        assert sd.dtype == {mx.float32, mx.float16}
+
+
+class TestMetadataErrorPaths:
+    def test_file_shorter_than_header_length_field(self, tmp_path):
+        # Fewer than the 8 bytes holding the header length: struct.unpack
+        # raises struct.error (a plain Exception subclass, NOT the ValueError
+        # the docstring advertises for malformed headers).
+        import struct
+
+        path = tmp_path / "short.safetensors"
+        path.write_bytes(b"\x01\x02\x03")
+        with pytest.raises(struct.error):
+            read_safetensors_metadata(path)
+
+    def test_header_length_past_eof(self, tmp_path):
+        import struct
+
+        path = tmp_path / "trunc.safetensors"
+        path.write_bytes(struct.pack("<Q", 1000) + b"{}")
+        with pytest.raises(ValueError, match="truncated safetensors header"):
+            read_safetensors_metadata(path)
+
+    def test_header_not_valid_json(self, tmp_path):
+        import struct
+
+        body = b"not json at all"
+        path = tmp_path / "badjson.safetensors"
+        path.write_bytes(struct.pack("<Q", len(body)) + body)
+        # json.JSONDecodeError subclasses ValueError, so the documented
+        # "ValueError if the header is malformed" contract holds here.
+        with pytest.raises(ValueError):
+            read_safetensors_metadata(path)

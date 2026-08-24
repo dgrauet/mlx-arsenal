@@ -1,10 +1,12 @@
 """Tests for mlx_arsenal.diffusion.cfg_skip."""
 
+import math
 from typing import Any
 
 import mlx.core as mx
 import pytest
 
+from mlx_arsenal._typing import item_float
 from mlx_arsenal.diffusion import (
     CFGSimilarityProfiler,
     CFGSkipController,
@@ -48,6 +50,36 @@ class TestCfgHeadSimilarity:
         c = mx.zeros((2, 4))  # ndim < 4
         with pytest.raises(ValueError):
             cfg_head_similarity(c, c, metric="cosine")
+
+
+class TestCfgHeadSimilarityDegenerate:
+    def test_relative_l1_cond_zero_uncond_nonzero_is_inf(self):
+        # base = mean(|cond|) = 0 with a non-zero diff → nonzero/0 → +inf
+        # (never skipped under the <= threshold convention).
+        cond = mx.zeros((1, 2, 4, 4))
+        uncond = mx.ones((1, 2, 4, 4))
+        sim = cfg_head_similarity(cond, uncond, metric="relative_l1")
+        assert sim.shape == (2,)
+        for h in range(2):
+            v = item_float(sim[h])
+            assert math.isinf(v) and v > 0
+
+    def test_relative_l1_both_zero_is_zero(self):
+        # 0/0 is defined as 0.0 (identical branches → always skippable).
+        z = mx.zeros((1, 2, 4, 4))
+        sim = cfg_head_similarity(z, z, metric="relative_l1")
+        for h in range(2):
+            assert sim[h].item() == 0.0
+
+    def test_cosine_zero_norm_is_zero(self):
+        # A zero-norm branch makes the denominator 0; similarity is defined
+        # as 0.0 so the head is never skipped.
+        cond = mx.zeros((1, 2, 4, 4))
+        uncond = mx.ones((1, 2, 4, 4))
+        for a, b in ((cond, uncond), (uncond, cond), (cond, cond)):
+            sim = cfg_head_similarity(a, b, metric="cosine")
+            for h in range(2):
+                assert sim[h].item() == 0.0
 
 
 class TestCfgSkipMask:

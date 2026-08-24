@@ -77,6 +77,16 @@ class TestCommonCache:
             _ = ctrl.previous_residual
 
     @pytest.mark.parametrize("factory", _CACHE_FACTORIES)
+    def test_step_index_out_of_range_raises(self, factory):
+        # All factories build num_steps=4 controllers; the range check runs
+        # before mode dispatch, so no attn_input is needed.
+        ctrl = factory()
+        with pytest.raises(ValueError):
+            ctrl.should_refresh(4)
+        with pytest.raises(ValueError):
+            ctrl.should_refresh(-1)
+
+    @pytest.mark.parametrize("factory", _CACHE_FACTORIES)
     def test_reset_clears_state(self, factory):
         ctrl = factory()
         ctrl.cache_residual(mx.ones((1, 2, 4, 4)))
@@ -146,6 +156,15 @@ class TestAdaptive:
         ctrl.should_refresh(0, mx.ones((1, 2, 4, 4)))  # seed
         with pytest.raises(RuntimeError):
             ctrl.should_refresh(1)  # no attn_input
+
+    def test_zero_norm_seed_forces_refresh(self):
+        # All-zeros seed at the boundary → delta undefined at step 1 → the
+        # degenerate branch forces a refresh instead of propagating inf/nan.
+        ctrl = WindowResidualController.adaptive(num_steps=5, rel_l1_thresh=0.05)
+        assert ctrl.should_refresh(0, mx.zeros((1, 2, 4, 4))) is True
+        assert ctrl.should_refresh(1, mx.ones((1, 2, 4, 4))) is True
+        # Re-seeded with the step-1 input: a static input now skips.
+        assert ctrl.should_refresh(2, mx.ones((1, 2, 4, 4))) is False
 
     def test_validation(self):
         with pytest.raises(ValueError):

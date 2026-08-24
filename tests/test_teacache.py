@@ -135,6 +135,19 @@ class TestArbitraryPayloadCache:
         assert mx.allclose(retrieved["uncond"][1], mx.array([4.0])).item()
 
 
+class TestZeroNormDegenerate:
+    def test_zero_seed_forces_compute_and_resets_accumulator(self):
+        # An all-zeros modulated input at step 0 makes the relative-L1 delta
+        # undefined (0/0). The next non-boundary step must force a compute
+        # and reset the accumulator instead of propagating inf/nan.
+        c = make_controller(num_steps=10, rel_l1_thresh=0.1)
+        c.should_compute(0, mx.zeros((4,)))
+        assert c.should_compute(1, mx.full((4,), 1.0)) is True
+        # The forced compute re-seeded with the step-1 input and zeroed the
+        # accumulator: a subsequent tiny delta must skip.
+        assert c.should_compute(2, mx.full((4,), 1.001)) is False
+
+
 class TestConstructorAndStepValidation:
     def test_nonpositive_num_steps_raises(self):
         with pytest.raises(ValueError):

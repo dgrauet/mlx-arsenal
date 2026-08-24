@@ -59,6 +59,28 @@ class TestPerLayerAttentionCache:
         with pytest.raises(ValueError):
             PerLayerAttentionCache(num_steps=4, rel_l1_thresh=-0.5)
 
+    def test_zero_norm_seed_forces_recompute(self):
+        # All-zeros seed at step 0 → delta undefined → next step recomputes.
+        cache = PerLayerAttentionCache(num_steps=5, rel_l1_thresh=0.1)
+        assert cache.should_compute(0, mx.zeros((1, 2, 4, 4))) is True
+        assert cache.should_compute(1, mx.ones((1, 2, 4, 4))) is True
+        # The degenerate branch re-seeded with the step-1 input: a tiny
+        # delta at step 2 skips as usual.
+        assert cache.should_compute(2, mx.ones((1, 2, 4, 4))) is False
+
+    def test_non_boundary_before_seed_raises(self):
+        cache = PerLayerAttentionCache(num_steps=5, rel_l1_thresh=0.1)
+        with pytest.raises(RuntimeError):
+            cache.should_compute(1, mx.ones((1, 2, 4, 4)))
+
+    def test_out_of_range_step_index_raises(self):
+        cache = PerLayerAttentionCache(num_steps=4, rel_l1_thresh=0.1)
+        x = mx.ones((1, 2, 4, 4))
+        with pytest.raises(ValueError):
+            cache.should_compute(4, x)
+        with pytest.raises(ValueError):
+            cache.should_compute(-1, x)
+
     def test_should_compute_from_summary(self):
         cache = PerLayerAttentionCache(num_steps=5, rel_l1_thresh=0.1)
         assert cache.should_compute_from_summary(0, 99.0) is True
@@ -93,6 +115,31 @@ class TestPerHeadAttentionCache:
         assert m.shape == (2,)
         assert bool(m[0].item()) is True
         assert bool(m[1].item()) is False
+
+    def test_zero_norm_head_forces_recompute(self):
+        # Head 0 seeds with zeros (summary 0 → delta undefined → recompute);
+        # head 1 seeds with ones and stays static (skip).
+        S, D = 4, 4
+        x0 = mx.concatenate([mx.zeros((1, 1, S, D)), mx.ones((1, 1, S, D))], axis=1)
+        x1 = mx.ones((1, 2, S, D))
+        cache = PerHeadAttentionCache(num_heads=2, num_steps=5, rel_l1_thresh=0.1)
+        assert mx.all(cache.should_compute(0, x0)).item()
+        m = cache.should_compute(1, x1)
+        assert bool(m[0].item()) is True
+        assert bool(m[1].item()) is False
+
+    def test_non_boundary_before_seed_raises(self):
+        cache = PerHeadAttentionCache(num_heads=2, num_steps=5, rel_l1_thresh=0.1)
+        with pytest.raises(RuntimeError):
+            cache.should_compute(1, mx.ones((1, 2, 4, 4)))
+
+    def test_out_of_range_step_index_raises(self):
+        cache = PerHeadAttentionCache(num_heads=2, num_steps=4, rel_l1_thresh=0.1)
+        x = mx.ones((1, 2, 4, 4))
+        with pytest.raises(ValueError):
+            cache.should_compute(4, x)
+        with pytest.raises(ValueError):
+            cache.should_compute(-1, x)
 
     def test_should_compute_from_summary(self):
         cache = PerHeadAttentionCache(num_heads=3, num_steps=5, rel_l1_thresh=0.1)
