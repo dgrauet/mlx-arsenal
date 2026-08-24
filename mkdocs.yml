@@ -86,3 +86,4 @@ nav:
       - Overview: adr/index.md
       - "ADR-0000: Adopt Intendant": adr/0000-adopt-intendant.md
       - "ADR-0001: Sparse-attention roadmap": adr/0001-sparse-attention-roadmap.md
+      - "Research: verified feature caching": research/verified-feature-caching.md

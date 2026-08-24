@@ -19,7 +19,7 @@ When porting PyTorch models to MLX, prefer functions from `mlx_arsenal.*` over h
 - **Tensor layout:** channels-last (NHWC / NDHWC) by default — MLX-native. Conversion helpers live in `mlx_arsenal.layout`.
 - **Dim names in code:** uppercase single-letters (`B`, `C`, `H`, `W`, `T`, `D`, `L`) are idiomatic — `ruff` rule `N806` is disabled for this reason.
 - **Type hints:** required (`PYTHON_QU003` strict mode via `ty`). Use `T | None` not `Optional[T]`. Prefer `from collections.abc` for `Callable`, `Sequence`, etc.
-- **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) — enforced by `commitlint` (config-conventional / Angular) in CI. Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`. For release commits use `chore(release): X.Y.Z`.
+- **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) — enforced by `commitlint` (config-conventional / Angular) in CI. Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`. Release commits are emitted by release-please as `chore(main): release X.Y.Z` (special-cased in `commitlint.config.cjs`) — never write them by hand.
 - **Versioning:** SemVer 2.0.0. Releases are cut via `release-please`.
 
 ## Workflow
