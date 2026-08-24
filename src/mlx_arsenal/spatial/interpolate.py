@@ -68,7 +68,7 @@ def interpolate_nearest(
 
 def interpolate_3d(
     x: mx.array,
-    size: tuple,
+    size: tuple[int, int, int],
 ) -> mx.array:
     """Nearest-neighbor interpolation for 5D (B,D,H,W,C) tensors.
 

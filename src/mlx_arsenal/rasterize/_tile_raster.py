@@ -15,18 +15,15 @@ import mlx.core as mx
 RASTER_TILE = 16
 CHUNK = 256
 
-# CHUNK is passed to `threadgroup=` from Python below, but `sh_fid[256]`,
-# `base += 256` and `min(256, ...)` inside the Metal source string are
-# literals, not interpolated from CHUNK — same for RASTER_TILE's `16`s in
-# `sx * 16` / `tid % 16u`. Changing either constant here without also editing
-# the source string desyncs threadgroup size from shared-memory layout (e.g.
-# CHUNK=128 would leave half the threadgroup buffer stale) and produces
-# silently wrong pixels, not a crash. This tripwire is a plain raise, not an
-# assert, so `python -O` cannot strip it; it stays until the source string is
-# f-string-interpolated in a follow-up.
-if CHUNK != 256 or RASTER_TILE != 16:
+# The Metal source is generated from _TEMPLATE below with CHUNK and
+# RASTER_TILE interpolated, so the constants and the kernel cannot desync.
+# The one real constraint: the chunk is loaded cooperatively by the
+# RASTER_TILE * RASTER_TILE threads of a threadgroup, so CHUNK must not
+# exceed the threadgroup size.
+if CHUNK > RASTER_TILE * RASTER_TILE:
     raise RuntimeError(
-        "CHUNK and RASTER_TILE must match the literal 256s and 16s hardcoded in _SOURCE"
+        f"CHUNK ({CHUNK}) must be <= RASTER_TILE**2 ({RASTER_TILE * RASTER_TILE}): "
+        "each chunk is loaded cooperatively by one threadgroup"
     )
 
 __all__ = ["RASTER_TILE", "raster_tiles"]
@@ -47,10 +44,10 @@ inline bool edge_inside(long e, bool top_left) {
 }
 """
 
-_SOURCE = """
-    threadgroup int   sh_xy[256 * 6];
-    threadgroup float sh_zw[256 * 6];
-    threadgroup int   sh_fid[256];
+_TEMPLATE = """
+    threadgroup int   sh_xy[__CHUNK__ * 6];
+    threadgroup float sh_zw[__CHUNK__ * 6];
+    threadgroup int   sh_fid[__CHUNK__];
 
     int width      = dims[0];
     int height     = dims[1];
@@ -63,8 +60,8 @@ _SOURCE = """
 
     int sx = (int)(sub % (uint)sub_x);
     int sy = (int)(sub / (uint)sub_x);
-    int px = sx * 16 + (int)(tid % 16u);
-    int py = sy * 16 + (int)(tid / 16u);
+    int px = sx * __TILE__ + (int)(tid % __TILE__u);
+    int py = sy * __TILE__ + (int)(tid / __TILE__u);
 
     // Parent binning tile for this sub-tile.
     int bt = (py / tile_size) * tiles_x + (px / tile_size);
@@ -81,8 +78,8 @@ _SOURCE = """
     float prior = active ? depth_prior[py * width + px] : 0.0f;
     float occl = fparams[0];
 
-    for (int base = lo; base < hi; base += 256) {
-        int n = min(256, hi - base);
+    for (int base = lo; base < hi; base += __CHUNK__) {
+        int n = min(__CHUNK__, hi - base);
         if ((int)tid < n) {
             int f = sorted_faces[base + (int)tid];
             sh_fid[tid] = f;
@@ -153,6 +150,8 @@ _SOURCE = """
         barycentric_out[o * 3 + 2] = b2;
     }
 """
+
+_SOURCE = _TEMPLATE.replace("__CHUNK__", str(CHUNK)).replace("__TILE__", str(RASTER_TILE))
 
 _kernel = None
 

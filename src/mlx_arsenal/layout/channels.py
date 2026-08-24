@@ -54,7 +54,7 @@ def to_channels_first(x: mx.array) -> mx.array:
 
 
 @contextmanager
-def channels_last(x_ref: list):
+def channels_last(x_ref: list[mx.array]):
     """Context manager that converts a tensor to channels-last on entry
     and back to channels-first on exit.
 

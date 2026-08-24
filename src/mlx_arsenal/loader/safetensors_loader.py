@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 import struct
 from pathlib import Path
-from typing import cast
 
 import mlx.core as mx
 
+from mlx_arsenal._io import load_tensor_dict
 from mlx_arsenal.loader.sd_ops import KeyValueOperationResult, SDOps
 from mlx_arsenal.loader.state_dict import StateDict
 
@@ -82,12 +82,7 @@ class SafetensorsStateDictLoader:
 
         shards = path if isinstance(path, list) else [path]
         for shard in shards:
-            loaded = mx.load(str(shard))
-            if not isinstance(loaded, dict):
-                raise TypeError(
-                    f"expected dict from safetensors, got {type(loaded).__name__} for {shard!r}"
-                )
-            weights = cast(dict[str, mx.array], loaded)
+            weights = load_tensor_dict(shard)
 
             for raw_key, raw_value in weights.items():
                 if sd_ops is not None:

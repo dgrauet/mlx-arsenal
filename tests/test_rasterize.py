@@ -477,10 +477,6 @@ def test_large_mesh_completes():
     assert item_int(mx.sum((fi > 0).astype(mx.int32))) > 0
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 class TestDepthPriorValidation:
     def test_wrong_shape_prior_raises(self):
         width, height = 16, 16

@@ -146,7 +146,8 @@ class FlowMatchEulerDiscreteScheduler:
 
         Args:
             model_output: Predicted velocity (same shape as ``sample``).
-            timestep: Current timestep (only used to lazy-init the step index).
+            timestep: Current timestep. Accepted for diffusers API parity;
+                unused (the scheduler tracks its own step index).
             sample: Current noisy sample.
 
         Returns:

@@ -125,3 +125,25 @@ def rasterize_reference(
             bary[..., c] = np.where(win, pc / norm, bary[..., c])
 
     return fi, bary, depth
+
+
+def quad_mesh(n: int, seed: int = 0):
+    """Triangulated grid in clip space with many shared edges (test mesh)."""
+    import numpy as np
+
+    from mlx_arsenal._typing import array_from_any
+
+    rng = np.random.default_rng(seed)
+    g = np.linspace(-0.9, 0.9, n + 1)
+    xs, ys = np.meshgrid(g, g)
+    zs = rng.uniform(0.1, 0.9, size=xs.shape)
+    verts = np.stack([xs.ravel(), ys.ravel(), zs.ravel(), np.ones(xs.size)], axis=1).astype(
+        np.float32
+    )
+    idx = np.arange((n + 1) ** 2).reshape(n + 1, n + 1)
+    tl, tr = idx[:-1, :-1].ravel(), idx[:-1, 1:].ravel()
+    bl, br = idx[1:, :-1].ravel(), idx[1:, 1:].ravel()
+    faces = np.concatenate(
+        [np.stack([tl, bl, tr], axis=1), np.stack([tr, bl, br], axis=1)], axis=0
+    ).astype(np.int32)
+    return array_from_any(verts), array_from_any(faces)

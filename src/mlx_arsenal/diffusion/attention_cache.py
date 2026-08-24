@@ -6,6 +6,9 @@ the next step when the input has barely changed. Two granularities:
 * :class:`PerLayerAttentionCache` — scalar similarity, one decision per layer
   per step. Simpler, mirrors :class:`mlx_arsenal.diffusion.TeaCacheController`
   but at the attention sub-layer instead of a whole transformer block.
+* :class:`PerHeadAttentionCache` — per-head similarity, one decision per head
+  per step; skipped heads reuse their slice of the cached output via
+  :func:`splice_heads`.
 
 Decision rule, at step ``i``:
 
@@ -22,7 +25,7 @@ from __future__ import annotations
 
 import mlx.core as mx
 
-from .._typing import item_float
+from ._cache_common import RelL1State, check_step, require_cached
 
 
 class PerLayerAttentionCache:
@@ -35,14 +38,17 @@ class PerLayerAttentionCache:
             raise ValueError(f"rel_l1_thresh must be > 0, got {rel_l1_thresh}")
         self.num_steps = num_steps
         self.rel_l1_thresh = rel_l1_thresh
-        self._prev_input: mx.array | None = None
-        self._prev_summary: float | None = None
+        self._state = RelL1State(
+            "should_compute called for a non-boundary step before step 0 — "
+            "boundary steps must run first to seed the cache."
+        )
+        self._from_summary: float | None = None
         self._prev_output: mx.array | None = None
 
     def reset(self) -> None:
         """Clear all state. Call at the start of each new generation."""
-        self._prev_input = None
-        self._prev_summary = None
+        self._state.reset()
+        self._from_summary = None
         self._prev_output = None
 
     def should_compute(self, step_index: int, attn_input: mx.array) -> bool:
@@ -51,26 +57,12 @@ class PerLayerAttentionCache:
         Side-effects: advances the stored previous input and summary. Must be
         called once per step in order.
         """
-        self._check_step(step_index)
+        check_step(step_index, self.num_steps)
         if step_index == 0 or step_index == self.num_steps - 1:
-            self._prev_input = attn_input
-            self._prev_summary = item_float(mx.mean(mx.abs(attn_input)))
+            self._state.seed(attn_input)
             return True
-        prev = self._prev_input
-        prev_summary = self._prev_summary
-        if prev is None or prev_summary is None:
-            raise RuntimeError(
-                "should_compute called for a non-boundary step before step 0 — "
-                "boundary steps must run first to seed the cache."
-            )
-        if prev_summary == 0.0:
-            self._prev_input = attn_input
-            self._prev_summary = item_float(mx.mean(mx.abs(attn_input)))
-            return True
-        delta = item_float(mx.mean(mx.abs(attn_input - prev))) / prev_summary
-        self._prev_input = attn_input
-        self._prev_summary = item_float(mx.mean(mx.abs(attn_input)))
-        return delta >= self.rel_l1_thresh
+        delta = self._state.delta(attn_input)
+        return True if delta is None else delta >= self.rel_l1_thresh
 
     def should_compute_from_summary(self, step_index: int, summary: float) -> bool:
         """Decide using a caller-supplied scalar summary instead of a tensor.
@@ -83,17 +75,17 @@ class PerLayerAttentionCache:
         denoising run: the two methods write semantically different values
         into the internal previous-summary slot. Pick one mode per run.
         """
-        self._check_step(step_index)
+        check_step(step_index, self.num_steps)
         if step_index == 0 or step_index == self.num_steps - 1:
-            self._prev_summary = summary
+            self._from_summary = summary
             return True
-        if self._prev_summary is None:
+        if self._from_summary is None:
             raise RuntimeError(
                 "should_compute_from_summary called for a non-boundary step "
                 "before step 0 — boundary steps must run first to seed."
             )
         out = summary >= self.rel_l1_thresh
-        self._prev_summary = summary
+        self._from_summary = summary
         return out
 
     def cache_output(self, output: mx.array) -> None:
@@ -103,16 +95,11 @@ class PerLayerAttentionCache:
     @property
     def previous_output(self) -> mx.array:
         """Last cached attention output. Raises before the first ``cache_output`` call."""
-        if self._prev_output is None:
-            raise RuntimeError(
-                "No output cached yet — call cache_output() after a computed "
-                "step before reading previous_output."
-            )
-        return self._prev_output
-
-    def _check_step(self, step_index: int) -> None:
-        if step_index < 0 or step_index >= self.num_steps:
-            raise ValueError(f"step_index must be in [0, {self.num_steps}), got {step_index}")
+        return require_cached(
+            self._prev_output,
+            "No output cached yet — call cache_output() after a computed "
+            "step before reading previous_output.",
+        )
 
 
 class PerHeadAttentionCache:
@@ -148,7 +135,7 @@ class PerHeadAttentionCache:
         Side-effects: advances the stored previous input and per-head summary.
         Must be called once per step in order.
         """
-        self._check_step(step_index)
+        check_step(step_index, self.num_steps)
         head_summary = self._reduce_per_head(attn_input)
         if step_index == 0 or step_index == self.num_steps - 1:
             self._prev_input = attn_input
@@ -178,7 +165,7 @@ class PerHeadAttentionCache:
         run: the two methods write semantically different values into the
         internal previous-summary slot. Pick one mode per run.
         """
-        self._check_step(step_index)
+        check_step(step_index, self.num_steps)
         if summary.ndim != 1 or summary.shape[0] != self.num_heads:
             raise ValueError(
                 f"summary must be 1D of length num_heads={self.num_heads}, "
@@ -203,16 +190,11 @@ class PerHeadAttentionCache:
     @property
     def previous_output(self) -> mx.array:
         """Last cached attention output. Raises before the first ``cache_output`` call."""
-        if self._prev_output is None:
-            raise RuntimeError(
-                "No output cached yet — call cache_output() after a computed "
-                "step before reading previous_output."
-            )
-        return self._prev_output
-
-    def _check_step(self, step_index: int) -> None:
-        if step_index < 0 or step_index >= self.num_steps:
-            raise ValueError(f"step_index must be in [0, {self.num_steps}), got {step_index}")
+        return require_cached(
+            self._prev_output,
+            "No output cached yet — call cache_output() after a computed "
+            "step before reading previous_output.",
+        )
 
     def _reduce_per_head(self, x: mx.array) -> mx.array:
         if x.ndim < 2 or x.shape[1] != self.num_heads:

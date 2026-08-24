@@ -14,6 +14,9 @@ from typing import cast
 
 import mlx.core as mx
 
+from mlx_arsenal.attention._thw import thw_coords as _thw_ids
+from mlx_arsenal.attention._thw import validate_thw as _validate_thw
+
 
 class Kind(Enum):
     """Discrete head-pattern label."""
@@ -58,27 +61,6 @@ def classify(
         else:
             out.append(Kind.OTHER)
     return out
-
-
-def _thw_ids(T: int, H: int, W: int) -> tuple[mx.array, mx.array, mx.array]:
-    """Per-token (t, h, w) coordinate vectors of length S=T*H*W (T-major).
-
-    Mirror of ``video_masks._thw_coords``. Kept private here so ``profile``
-    has no internal dependency on ``video_masks``.
-    """
-    t_idx = mx.arange(T).reshape(T, 1, 1)
-    h_idx = mx.arange(H).reshape(1, H, 1)
-    w_idx = mx.arange(W).reshape(1, 1, W)
-    t_flat = mx.broadcast_to(t_idx, (T, H, W)).reshape(-1)
-    h_flat = mx.broadcast_to(h_idx, (T, H, W)).reshape(-1)
-    w_flat = mx.broadcast_to(w_idx, (T, H, W)).reshape(-1)
-    return t_flat, h_flat, w_flat
-
-
-def _validate_thw(T: int, H: int, W: int) -> None:
-    """Same contract as ``video_masks._validate_thw``."""
-    if T <= 0 or H <= 0 or W <= 0:
-        raise ValueError(f"T, H, W must be positive, got T={T}, H={H}, W={W}")
 
 
 def classify_heads_from_probs(

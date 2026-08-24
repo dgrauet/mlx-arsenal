@@ -130,7 +130,7 @@ class SDOps:
         return replace(self, mapping=(*self.mapping, ContentMatching(prefix, suffix)))
 
     def with_additional_allowed_keys(self, keys: frozenset[str]) -> SDOps:
-        """Restrict (or further restrict) the post-replacement key set.
+        """Widen (or seed) the post-replacement key set.
 
         If :attr:`allowed_keys` is already set, the two sets are
         union'd — additive, never subtractive.

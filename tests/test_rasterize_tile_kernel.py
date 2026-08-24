@@ -6,7 +6,7 @@ from mlx_arsenal._typing import array_from_any, item_float, item_int
 from mlx_arsenal.rasterize._binning import build_tile_lists, choose_tiling
 from mlx_arsenal.rasterize._fixedpoint import to_screen
 from mlx_arsenal.rasterize._tile_raster import RASTER_TILE, raster_tiles
-from tests.rasterize_oracle import rasterize_reference
+from tests.rasterize_oracle import quad_mesh, rasterize_reference
 
 
 def _run(vertices, faces, width, height, tile_size=16, cull="none"):
@@ -28,24 +28,6 @@ def _oracle(vertices, faces, width, height, cull="none"):
         height,
         cull,
     )
-
-
-def _quad_mesh(n, seed=0):
-    """Triangulated grid in clip space: many shared edges."""
-    rng = np.random.default_rng(seed)
-    g = np.linspace(-0.9, 0.9, n + 1)
-    xs, ys = np.meshgrid(g, g)
-    zs = rng.uniform(0.1, 0.9, size=xs.shape)
-    verts = np.stack([xs.ravel(), ys.ravel(), zs.ravel(), np.ones(xs.size)], axis=1).astype(
-        np.float32
-    )
-    idx = np.arange((n + 1) ** 2).reshape(n + 1, n + 1)
-    tl, tr = idx[:-1, :-1].ravel(), idx[:-1, 1:].ravel()
-    bl, br = idx[1:, :-1].ravel(), idx[1:, 1:].ravel()
-    faces = np.concatenate(
-        [np.stack([tl, bl, tr], axis=1), np.stack([tr, bl, br], axis=1)], axis=0
-    ).astype(np.int32)
-    return array_from_any(verts), array_from_any(faces)
 
 
 def _perspective_soup(n_tris=20, seed=11):
@@ -81,14 +63,14 @@ class TestAgainstOracle:
         np.testing.assert_allclose(np.array(bary.tolist()), ref_bary, atol=1e-5)
 
     def test_grid_mesh_matches(self):
-        v, f = _quad_mesh(6)
+        v, f = quad_mesh(6)
         fi, bary, _ = _run(v, f, 64, 64)
         ref_fi, ref_bary, _ = _oracle(v, f, 64, 64)
         np.testing.assert_array_equal(np.array(fi.tolist()), ref_fi)
         np.testing.assert_allclose(np.array(bary.tolist()), ref_bary, atol=1e-5)
 
     def test_depth_matches_oracle(self):
-        v, f = _quad_mesh(4)
+        v, f = quad_mesh(4)
         _, _, depth = _run(v, f, 32, 32)
         _, _, ref_depth = _oracle(v, f, 32, 32)
         got = np.array(depth.tolist())
