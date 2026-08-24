@@ -21,6 +21,8 @@ from typing import Any
 import mlx.core as mx
 import numpy as np
 
+from ._cache_common import RelL1State, check_step, require_cached
+
 
 class TeaCacheController:
     """Stateful controller deciding when to skip a transformer forward.
@@ -59,13 +61,16 @@ class TeaCacheController:
         self.rel_l1_thresh = rel_l1_thresh
         self.coefficients = list(coefficients)
         self._rescale = np.poly1d(self.coefficients)
-        self._prev_modulated_input: mx.array | None = None
+        self._state = RelL1State(
+            "should_compute called for a non-boundary step before step 0 — "
+            "boundary steps must run first to seed the modulation cache."
+        )
         self._accumulated: float = 0.0
         self._prev_residual: Any | None = None
 
     def reset(self) -> None:
         """Clear all state. Call at the start of each new generation."""
-        self._prev_modulated_input = None
+        self._state.reset()
         self._accumulated = 0.0
         self._prev_residual = None
 
@@ -75,27 +80,18 @@ class TeaCacheController:
         Side-effects: advances the stored ``previous_modulated_input`` and the
         internal accumulator. Must be called once per step in order.
         """
-        if step_index < 0 or step_index >= self.num_steps:
-            raise ValueError(f"step_index must be in [0, {self.num_steps}), got {step_index}")
+        check_step(step_index, self.num_steps)
         if step_index == 0 or step_index == self.num_steps - 1:
             self._accumulated = 0.0
-            self._prev_modulated_input = modulated_input
+            self._state.seed(modulated_input)
             return True
 
-        prev = self._prev_modulated_input
-        if prev is None:
-            raise RuntimeError(
-                "should_compute called for a non-boundary step before step 0 — "
-                "boundary steps must run first to seed the modulation cache."
-            )
-        prev_norm = mx.mean(mx.abs(prev)).item()
-        self._prev_modulated_input = modulated_input
-        if prev_norm == 0.0:
+        delta = self._state.delta(modulated_input)
+        if delta is None:
             # Degenerate modulation (all-zeros). Delta is undefined; force compute
             # and reset the accumulator rather than propagating inf/nan.
             self._accumulated = 0.0
             return True
-        delta = mx.mean(mx.abs(modulated_input - prev)).item() / prev_norm
         self._accumulated += float(self._rescale(delta))
 
         if self._accumulated < self.rel_l1_thresh:
@@ -116,9 +112,8 @@ class TeaCacheController:
     @property
     def previous_residual(self) -> Any:
         """Last cached payload. Raises before the first ``cache_residual`` call."""
-        if self._prev_residual is None:
-            raise RuntimeError(
-                "No residual cached yet — call cache_residual() after a computed step "
-                "before reading previous_residual."
-            )
-        return self._prev_residual
+        return require_cached(
+            self._prev_residual,
+            "No residual cached yet — call cache_residual() after a computed step "
+            "before reading previous_residual.",
+        )

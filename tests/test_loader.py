@@ -29,6 +29,17 @@ def _save(
 # ---------------------------------------------------------------------------
 
 
+def _split_qkv(tensor_key: str, tensor_value: mx.array) -> list[KeyValueOperationResult]:
+    """Fused-QKV splitter reused by the kv-operation tests."""
+    base = tensor_key.replace(".qkv.weight", "")
+    q, k, v = mx.split(tensor_value, 3, axis=0)
+    return [
+        KeyValueOperationResult(f"{base}.q.weight", q),
+        KeyValueOperationResult(f"{base}.k.weight", k),
+        KeyValueOperationResult(f"{base}.v.weight", v),
+    ]
+
+
 class TestSDOpsMatching:
     def test_default_chain_drops_all_keys(self):
         # No ContentMatching in the chain → nothing passes.
@@ -125,16 +136,7 @@ class TestSDOpsKeyValueOperation:
     def test_kv_op_splits_one_key_into_many(self):
         """A kv operation can return multiple results — e.g. fused QKV split."""
 
-        def split_qkv(tensor_key: str, tensor_value: mx.array) -> list[KeyValueOperationResult]:
-            base = tensor_key.replace(".qkv.weight", "")
-            q, k, v = mx.split(tensor_value, 3, axis=0)
-            return [
-                KeyValueOperationResult(f"{base}.q.weight", q),
-                KeyValueOperationResult(f"{base}.k.weight", k),
-                KeyValueOperationResult(f"{base}.v.weight", v),
-            ]
-
-        ops = SDOps("split").with_matching().with_kv_operation(split_qkv, key_suffix=".qkv.weight")
+        ops = SDOps("split").with_matching().with_kv_operation(_split_qkv, key_suffix=".qkv.weight")
         fused = mx.ones((6, 4))
         pairs = ops.apply_to_key_value("attn.qkv.weight", fused)
         assert len(pairs) == 3
@@ -202,16 +204,7 @@ class TestSafetensorsLoader:
         """End-to-end: fused QKV split during load."""
         path = _save(tmp_path, "w", {"attn.qkv.weight": mx.ones((6, 4))})
 
-        def split_qkv(tensor_key: str, tensor_value: mx.array) -> list[KeyValueOperationResult]:
-            base = tensor_key.replace(".qkv.weight", "")
-            q, k, v = mx.split(tensor_value, 3, axis=0)
-            return [
-                KeyValueOperationResult(f"{base}.q.weight", q),
-                KeyValueOperationResult(f"{base}.k.weight", k),
-                KeyValueOperationResult(f"{base}.v.weight", v),
-            ]
-
-        ops = SDOps("split").with_matching().with_kv_operation(split_qkv, key_suffix=".qkv.weight")
+        ops = SDOps("split").with_matching().with_kv_operation(_split_qkv, key_suffix=".qkv.weight")
         sd = SafetensorsStateDictLoader().load(path, sd_ops=ops)
         assert set(sd.sd) == {"attn.q.weight", "attn.k.weight", "attn.v.weight"}
 

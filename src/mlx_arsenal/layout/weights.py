@@ -1,21 +1,21 @@
 """Weight conversion utilities for loading PyTorch models into MLX."""
 
 from collections.abc import Callable
-from typing import cast
 
 import mlx.core as mx
+
+from mlx_arsenal._io import load_tensor_dict
 
 
 def convert_conv_weights(weight: mx.array) -> mx.array:
     """Convert a convolution weight tensor from PyTorch to MLX format.
 
-    PyTorch conv weights: (out_ch, in_ch, *kernel_size)  [channels-first]
-    MLX conv weights:     (*kernel_size, in_ch, out_ch)  [channels-last, transposed]
+    PyTorch conv weights are channels-first: ``(out, in, *kernel)``. MLX
+    keeps the output channel first and moves the input channel last:
 
-    Actually MLX Conv layout depends on the layer:
-    - Conv1d weight: (out, kernel, in) — but loaded as (out, in, kernel) from PT
-    - Conv2d weight: (out, kH, kW, in) — but loaded as (out, in, kH, kW) from PT
-    - Conv3d weight: (out, kD, kH, kW, in) — but loaded as (out, in, kD, kH, kW) from PT
+    - Conv1d: ``(out, in, K)`` → ``(out, K, in)``
+    - Conv2d: ``(out, in, kH, kW)`` → ``(out, kH, kW, in)``
+    - Conv3d: ``(out, in, kD, kH, kW)`` → ``(out, kD, kH, kW, in)``
 
     This function handles the permutation for all conv dimensions.
 
@@ -41,10 +41,10 @@ def convert_conv_weights(weight: mx.array) -> mx.array:
 
 def load_safetensors(
     path: str,
-    key_map: dict | None = None,
+    key_map: dict[str, str] | None = None,
     key_fn: Callable[[str], str] | None = None,
-    conv_keys: set | None = None,
-) -> dict:
+    conv_keys: set[str] | None = None,
+) -> dict[str, mx.array]:
     """Load safetensors weights with optional key remapping and conv conversion.
 
     Args:
@@ -60,10 +60,7 @@ def load_safetensors(
     Returns:
         Dict of parameter name -> mx.array.
     """
-    loaded = mx.load(str(path))
-    if not isinstance(loaded, dict):
-        raise TypeError(f"expected dict from safetensors, got {type(loaded).__name__}")
-    weights = cast(dict[str, mx.array], loaded)
+    weights = load_tensor_dict(path)
 
     if key_map or key_fn:
         remapped = {}

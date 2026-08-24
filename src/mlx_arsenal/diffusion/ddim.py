@@ -109,7 +109,7 @@ class DDIMScheduler:
 
         alphas = 1.0 - betas
         self.alphas_cumprod = mx.cumprod(alphas)
-        # ``prev`` for the very first step (t = timesteps[0]) reads this.
+        # Read when ``prev_t`` falls below 0, i.e. on the schedule's last step.
         self.final_alpha_cumprod = mx.array(1.0) if set_alpha_to_one else self.alphas_cumprod[0]
 
         self.num_inference_steps = num_inference_steps
