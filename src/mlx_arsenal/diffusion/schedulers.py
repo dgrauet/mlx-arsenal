@@ -57,11 +57,18 @@ def dynamic_shift_schedule(
         base_tokens: Anchor for ``base_shift``.
         max_tokens: Anchor for ``max_shift``.
         stretch: Rescale so the last non-zero sigma equals ``1 - terminal``.
-        terminal: Target terminal for stretching.
+        terminal: Target terminal for stretching. Must be in ``[0, 1)``.
 
     Returns:
         List of ``num_steps + 1`` sigma values ending at ``0.0``.
+
+    Raises:
+        ValueError: if ``stretch`` is enabled with ``terminal`` outside
+            ``[0, 1)`` (``terminal == 1.0`` would divide by zero and collapse
+            every non-zero sigma to 1.0).
     """
+    if stretch and not 0.0 <= terminal < 1.0:
+        raise ValueError(f"terminal must be in [0, 1) when stretch is enabled, got {terminal}")
     sigmas = np.linspace(1.0, 0.0, num_steps + 1)
 
     slope = (max_shift - base_shift) / (max_tokens - base_tokens)

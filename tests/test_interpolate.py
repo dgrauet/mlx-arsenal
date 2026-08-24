@@ -127,19 +127,15 @@ class TestReplicatePad:
 
 
 class TestInterpolateNearestSizeLengthMismatch:
-    # interpolate_nearest does not validate len(size) against the number of
-    # spatial dims — a defect: a too-short tuple crashes with a bare
-    # IndexError deep in the loop, and a too-long tuple silently ignores the
-    # extra entries instead of rejecting them.
-    def test_short_size_tuple_crashes(self):
+    def test_short_size_tuple_raises(self):
         x = mx.random.normal((1, 4, 4, 3))  # two spatial dims
-        with pytest.raises(IndexError):
+        with pytest.raises(ValueError, match="size"):
             interpolate_nearest(x, size=(2,))
 
-    def test_long_size_tuple_silently_ignores_extras(self):
+    def test_long_size_tuple_raises(self):
         x = mx.random.normal((1, 4, 4, 3))
-        out = interpolate_nearest(x, size=(2, 2, 99))  # third entry ignored
-        assert out.shape == (1, 2, 2, 3)
+        with pytest.raises(ValueError, match="size"):
+            interpolate_nearest(x, size=(2, 2, 99))
 
 
 class TestAvgPool1dRemainder:

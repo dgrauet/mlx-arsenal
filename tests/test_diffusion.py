@@ -434,19 +434,14 @@ class TestDynamicShiftExtrapolation:
         assert sigmas[-1] == 0.0
         assert all(a >= b for a, b in zip(sigmas[:-1], sigmas[1:], strict=False))
 
-    def test_stretch_terminal_one_collapses_schedule(self):
-        # Documented actual behavior (defect-adjacent, not inf/nan): with
-        # terminal=1.0 the stretch scale factor is x / 0.0 = +inf (numpy emits
-        # RuntimeWarning), and every non-zero sigma collapses to exactly 1.0 —
-        # a degenerate schedule where all denoising happens in the final step.
-        with pytest.warns(RuntimeWarning):
-            sigmas = dynamic_shift_schedule(
-                num_steps=6, num_tokens=2048, stretch=True, terminal=1.0
-            )
-        for s in sigmas:
-            assert math.isfinite(s)
-        assert sigmas[:-1] == [1.0] * 6
-        assert sigmas[-1] == 0.0
+    def test_stretch_terminal_out_of_range_raises(self):
+        # terminal=1.0 would divide by zero in the stretch scale factor and
+        # collapse every non-zero sigma to 1.0 (all denoising in the final
+        # step) — reject it, and negative terminals, up front.
+        with pytest.raises(ValueError):
+            dynamic_shift_schedule(num_steps=6, num_tokens=2048, stretch=True, terminal=1.0)
+        with pytest.raises(ValueError):
+            dynamic_shift_schedule(num_steps=6, num_tokens=2048, stretch=True, terminal=-0.1)
 
 
 class TestTimestepEmbeddingParams:

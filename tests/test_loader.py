@@ -313,7 +313,7 @@ class TestAllowedKeysKvOperationOrder:
 
 class TestMultiShardOverwrite:
     def test_later_shard_wins_for_shared_key(self, tmp_path):
-        first = mx.ones((2, 2), dtype=mx.float32)
+        first = mx.ones((2, 2), dtype=mx.bfloat16)
         second = mx.full((2, 2), 7.0, dtype=mx.float16)
         p1 = _save(tmp_path, "s1", {"a": first, "only1": mx.zeros((3,))})
         p2 = _save(tmp_path, "s2", {"a": second})
@@ -324,25 +324,21 @@ class TestMultiShardOverwrite:
         assert sd.sd["a"].dtype == mx.float16
         assert mx.allclose(sd.sd["a"].astype(mx.float32), mx.full((2, 2), 7.0)).item()
 
-        # Size/dtype accounting is per tensor *seen*, not per key kept: the
-        # overwritten first-shard "a" still counts toward size and its dtype
-        # stays in the set. Surprising, but it is what the loader does
-        # (size += val.nbytes runs before the dict assignment, unconditionally).
+        # Size/dtype accounting reflects the tensors actually KEPT: the
+        # overwritten first-shard "a" contributes neither its nbytes nor its
+        # bfloat16 dtype.
         only1 = sd.sd["only1"]
-        assert sd.size == first.nbytes + second.nbytes + only1.nbytes
+        assert sd.size == second.nbytes + only1.nbytes
         assert sd.dtype == {mx.float32, mx.float16}
 
 
 class TestMetadataErrorPaths:
     def test_file_shorter_than_header_length_field(self, tmp_path):
-        # Fewer than the 8 bytes holding the header length: struct.unpack
-        # raises struct.error (a plain Exception subclass, NOT the ValueError
-        # the docstring advertises for malformed headers).
-        import struct
-
+        # Fewer than the 8 bytes holding the header length must surface as
+        # the documented ValueError, not a raw struct.error.
         path = tmp_path / "short.safetensors"
         path.write_bytes(b"\x01\x02\x03")
-        with pytest.raises(struct.error):
+        with pytest.raises(ValueError, match="truncated"):
             read_safetensors_metadata(path)
 
     def test_header_length_past_eof(self, tmp_path):
