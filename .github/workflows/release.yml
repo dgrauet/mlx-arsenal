@@ -1,19 +1,19 @@
 name: Release
 
-# Two triggers cover both release flows:
-#   - `push: tags: v*` fires when a tag is pushed manually.
-#   - `release: published` fires when a GitHub Release is published — the
-#     path release-please takes when it merges its own PR.
+# Single trigger: `release: published` — the path release-please takes
+# when it merges its own PR (it runs under a GitHub App token, see
+# release-please.yml, so the event dispatches normally).
 #
-# release-please runs under a GitHub App token (see release-please.yml),
-# so its tags and releases dispatch this workflow normally; both triggers
-# are live and the job resolves the tag name from whichever event fired.
+# The old `push: tags` trigger is gone: with the App token both triggers
+# fired for every release, and the two concurrent runs raced on the
+# release-asset upload (HTTP 422 `ReleaseAsset.name already exists` on
+# every release, v0.12.1 included) and double-published to PyPI.
+# `workflow_dispatch` from a tag ref is the manual escape hatch if a
+# release event ever misfires.
 on:
-  push:
-    tags:
-      - "v*"
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   build:
