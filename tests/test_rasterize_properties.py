@@ -1,10 +1,10 @@
 import mlx.core as mx
 import numpy as np
 
-from mlx_arsenal._typing import array_from_any, item_int
+from mlx_arsenal._typing import item_int
 from mlx_arsenal.rasterize import rasterize_triangles
 from mlx_arsenal.rasterize._fixedpoint import to_screen
-from tests.rasterize_oracle import rasterize_reference
+from tests.rasterize_oracle import quad_mesh, rasterize_reference
 
 # Deliberately not a multiple of the RASTER_TILE (16) sub-tile size or of the
 # 32/64 binning tile sizes exercised below, so the right and bottom edges
@@ -13,27 +13,10 @@ from tests.rasterize_oracle import rasterize_reference
 PARTIAL_TILE_WIDTH, PARTIAL_TILE_HEIGHT = 100, 76
 
 
-def _quad_mesh(n: int, seed: int = 0) -> tuple[mx.array, mx.array]:
-    rng = np.random.default_rng(seed)
-    g = np.linspace(-0.9, 0.9, n + 1)
-    xs, ys = np.meshgrid(g, g)
-    zs = rng.uniform(0.1, 0.9, size=xs.shape)
-    verts = np.stack([xs.ravel(), ys.ravel(), zs.ravel(), np.ones(xs.size)], axis=1).astype(
-        np.float32
-    )
-    idx = np.arange((n + 1) ** 2).reshape(n + 1, n + 1)
-    tl, tr = idx[:-1, :-1].ravel(), idx[:-1, 1:].ravel()
-    bl, br = idx[1:, :-1].ravel(), idx[1:, 1:].ravel()
-    faces = np.concatenate(
-        [np.stack([tl, bl, tr], axis=1), np.stack([tr, bl, br], axis=1)], axis=0
-    ).astype(np.int32)
-    return array_from_any(verts), array_from_any(faces)
-
-
 class TestWatertightness:
     def test_no_holes_inside_the_mesh(self):
         """A closed triangulated grid leaves no background pixel in its interior."""
-        v, f = _quad_mesh(8)
+        v, f = quad_mesh(8)
         fi, _ = rasterize_triangles(v, f, 128, 128)
         got = np.array(fi.tolist())
         covered = got > 0
@@ -52,7 +35,7 @@ class TestWatertightness:
         isolation): any binning/claiming bug — including one confined to a
         partial tile — shows up as a face-index mismatch here.
         """
-        v, f = _quad_mesh(8)
+        v, f = quad_mesh(8)
         width, height = PARTIAL_TILE_WIDTH, PARTIAL_TILE_HEIGHT
         fi, _ = rasterize_triangles(v, f, width, height)
         verts_fx, verts_zw = to_screen(v, width, height)
@@ -70,7 +53,7 @@ class TestWatertightness:
 
 class TestTileSizeInvariance:
     def test_identical_across_tile_sizes(self):
-        v, f = _quad_mesh(10)
+        v, f = quad_mesh(10)
         width, height = PARTIAL_TILE_WIDTH, PARTIAL_TILE_HEIGHT
         ref_fi, ref_bary = rasterize_triangles(v, f, width, height, _tile_size=16)
         covered = int((np.array(ref_fi.tolist()) > 0).sum())
@@ -87,7 +70,7 @@ class TestDeterminism:
         uninitialised memory and unordered reductions — but not process-level
         state such as first-call compile-cache population.
         """
-        v, f = _quad_mesh(6)
+        v, f = quad_mesh(6)
         a_fi, a_bary = rasterize_triangles(v, f, 64, 64)
         assert item_int(mx.sum(a_fi > 0)) > 0, "test proves nothing if no pixel is covered"
         for _ in range(3):

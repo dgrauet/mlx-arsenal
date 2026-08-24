@@ -22,7 +22,7 @@ from collections.abc import Sequence
 
 import mlx.core as mx
 
-from .._typing import item_float
+from ._cache_common import RelL1State, check_step, require_cached
 
 
 class WindowResidualController:
@@ -40,8 +40,10 @@ class WindowResidualController:
         self._refresh_every: int = 0
         self._refresh_set: frozenset[int] = frozenset()
         self._rel_l1_thresh: float = 0.0
-        self._prev_input: mx.array | None = None
-        self._prev_summary: float | None = None
+        self._state = RelL1State(
+            "adaptive mode: should_refresh called at a non-boundary step "
+            "before the first boundary seeded the cache."
+        )
         self._prev_residual: mx.array | None = None
 
     @classmethod
@@ -85,8 +87,7 @@ class WindowResidualController:
 
     def reset(self) -> None:
         """Clear all state. Call at the start of each new generation."""
-        self._prev_input = None
-        self._prev_summary = None
+        self._state.reset()
         self._prev_residual = None
 
     def should_refresh(self, step_index: int, attn_input: mx.array | None = None) -> bool:
@@ -96,7 +97,7 @@ class WindowResidualController:
         otherwise. Boundary steps (0 and ``num_steps - 1``) always
         return ``True``.
         """
-        self._check_step(step_index)
+        check_step(step_index, self.num_steps)
         is_boundary = step_index == 0 or step_index == self.num_steps - 1
         if self._mode == "fixed":
             return is_boundary or step_index % self._refresh_every == 0
@@ -109,26 +110,11 @@ class WindowResidualController:
     def _adaptive_decision(self, is_boundary: bool, attn_input: mx.array | None) -> bool:
         if attn_input is None:
             raise RuntimeError("adaptive mode requires attn_input on every should_refresh call")
-        new_summary = item_float(mx.mean(mx.abs(attn_input)))
         if is_boundary:
-            self._prev_input = attn_input
-            self._prev_summary = new_summary
+            self._state.seed(attn_input)
             return True
-        prev = self._prev_input
-        prev_summary = self._prev_summary
-        if prev is None or prev_summary is None:
-            raise RuntimeError(
-                "adaptive mode: should_refresh called at a non-boundary step "
-                "before the first boundary seeded the cache."
-            )
-        if prev_summary == 0.0:
-            self._prev_input = attn_input
-            self._prev_summary = new_summary
-            return True
-        delta = item_float(mx.mean(mx.abs(attn_input - prev))) / prev_summary
-        self._prev_input = attn_input
-        self._prev_summary = new_summary
-        return delta >= self._rel_l1_thresh
+        delta = self._state.delta(attn_input)
+        return True if delta is None else delta >= self._rel_l1_thresh
 
     def cache_residual(self, residual: mx.array) -> None:
         """Store the ``full - window`` residual from the just-refreshed step for reuse."""
@@ -137,13 +123,8 @@ class WindowResidualController:
     @property
     def previous_residual(self) -> mx.array:
         """Last cached residual. Raises before the first ``cache_residual`` call."""
-        if self._prev_residual is None:
-            raise RuntimeError(
-                "No residual cached yet — call cache_residual() after a "
-                "refresh step before reading previous_residual."
-            )
-        return self._prev_residual
-
-    def _check_step(self, step_index: int) -> None:
-        if step_index < 0 or step_index >= self.num_steps:
-            raise ValueError(f"step_index must be in [0, {self.num_steps}), got {step_index}")
+        return require_cached(
+            self._prev_residual,
+            "No residual cached yet — call cache_residual() after a "
+            "refresh step before reading previous_residual.",
+        )

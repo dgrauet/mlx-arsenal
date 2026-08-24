@@ -4,7 +4,16 @@ import mlx.core as mx
 import mlx.nn as nn
 
 
-def patchify(x: mx.array, patch_size: tuple | int) -> mx.array:
+def _as_tuple(patch_size: int | tuple[int, ...], n: int) -> tuple[int, ...]:
+    """Normalize an int-or-tuple patch size to an ``n``-tuple."""
+    if isinstance(patch_size, int):
+        return (patch_size,) * n
+    if len(patch_size) != n:
+        raise ValueError(f"patch_size must be an int or a {n}-tuple, got {patch_size}")
+    return tuple(patch_size)
+
+
+def patchify(x: mx.array, patch_size: int | tuple[int, ...]) -> mx.array:
     """Convert spatial input into a sequence of flattened patches.
 
     Args:
@@ -19,10 +28,7 @@ def patchify(x: mx.array, patch_size: tuple | int) -> mx.array:
     if x.ndim == 4:
         # 2D: (B, H, W, C)
         B, H, W, C = x.shape
-        if isinstance(patch_size, int):
-            ph = pw = patch_size
-        else:
-            ph, pw = patch_size
+        ph, pw = _as_tuple(patch_size, 2)
         nh, nw = H // ph, W // pw
         x = x.reshape(B, nh, ph, nw, pw, C)
         x = x.transpose(0, 1, 3, 2, 4, 5)  # (B, nh, nw, ph, pw, C)
@@ -31,10 +37,7 @@ def patchify(x: mx.array, patch_size: tuple | int) -> mx.array:
     elif x.ndim == 5:
         # 3D: (B, D, H, W, C)
         B, D, H, W, C = x.shape
-        if isinstance(patch_size, int):
-            pd = ph = pw = patch_size
-        else:
-            pd, ph, pw = patch_size
+        pd, ph, pw = _as_tuple(patch_size, 3)
         nd, nh, nw = D // pd, H // ph, W // pw
         x = x.reshape(B, nd, pd, nh, ph, nw, pw, C)
         x = x.transpose(0, 1, 3, 5, 2, 4, 6, 7)  # (B, nd, nh, nw, pd, ph, pw, C)
@@ -46,8 +49,8 @@ def patchify(x: mx.array, patch_size: tuple | int) -> mx.array:
 
 def unpatchify(
     x: mx.array,
-    patch_size: tuple | int,
-    shape: tuple,
+    patch_size: int | tuple[int, ...],
+    shape: tuple[int, ...],
 ) -> mx.array:
     """Reconstruct spatial tensor from a sequence of patches.
 
@@ -64,10 +67,7 @@ def unpatchify(
 
     if len(shape) == 2:
         H, W = shape
-        if isinstance(patch_size, int):
-            ph = pw = patch_size
-        else:
-            ph, pw = patch_size
+        ph, pw = _as_tuple(patch_size, 2)
         nh, nw = H // ph, W // pw
         C = x.shape[-1] // (ph * pw)
         x = x.reshape(B, nh, nw, ph, pw, C)
@@ -76,10 +76,7 @@ def unpatchify(
 
     elif len(shape) == 3:
         D, H, W = shape
-        if isinstance(patch_size, int):
-            pd = ph = pw = patch_size
-        else:
-            pd, ph, pw = patch_size
+        pd, ph, pw = _as_tuple(patch_size, 3)
         nd, nh, nw = D // pd, H // ph, W // pw
         C = x.shape[-1] // (pd * ph * pw)
         x = x.reshape(B, nd, nh, nw, pd, ph, pw, C)
@@ -106,18 +103,17 @@ class PatchEmbed2d(nn.Module):
         self,
         in_channels: int = 3,
         embed_dim: int = 768,
-        patch_size: int | tuple = 16,
+        patch_size: int | tuple[int, int] = 16,
         bias: bool = True,
     ):
         super().__init__()
-        if isinstance(patch_size, int):
-            patch_size = (patch_size, patch_size)
-        self.patch_size = patch_size
+        ps = _as_tuple(patch_size, 2)
+        self.patch_size = ps
         self.proj = nn.Conv2d(
             in_channels,
             embed_dim,
-            kernel_size=patch_size,
-            stride=patch_size,
+            kernel_size=ps,
+            stride=ps,
             bias=bias,
         )
 
@@ -151,18 +147,17 @@ class PatchEmbed3d(nn.Module):
         self,
         in_channels: int = 3,
         embed_dim: int = 768,
-        patch_size: int | tuple = (2, 16, 16),
+        patch_size: int | tuple[int, int, int] = (2, 16, 16),
         bias: bool = True,
     ):
         super().__init__()
-        if isinstance(patch_size, int):
-            patch_size = (patch_size, patch_size, patch_size)
-        self.patch_size = patch_size
+        ps = _as_tuple(patch_size, 3)
+        self.patch_size = ps
         self.proj = nn.Conv3d(
             in_channels,
             embed_dim,
-            kernel_size=patch_size,
-            stride=patch_size,
+            kernel_size=ps,
+            stride=ps,
             bias=bias,
         )
 

@@ -9,17 +9,7 @@ from collections.abc import Callable
 
 import mlx.core as mx
 
-
-def _blend_weight_1d(size: int, blend_left: int, blend_right: int) -> mx.array:
-    """Create a 1D blending weight: ramp up at left, flat in middle, ramp down at right."""
-    w = mx.ones((size,), dtype=mx.float32)
-    if blend_left > 0:
-        ramp = mx.linspace(0, 1, blend_left + 2)[1:-1]  # exclude 0 and 1
-        w = mx.concatenate([ramp, w[blend_left:]])
-    if blend_right > 0:
-        ramp = mx.linspace(1, 0, blend_right + 2)[1:-1]
-        w = mx.concatenate([w[: size - blend_right], ramp])
-    return w
+from mlx_arsenal.tiling._blend import blend_weight_1d, window_starts
 
 
 def tiled_process(
@@ -27,7 +17,7 @@ def tiled_process(
     fn: Callable[[mx.array], mx.array],
     tile_size: int = 512,
     overlap: int = 64,
-    spatial_dims: tuple = (1, 2),
+    spatial_dims: tuple[int, int] = (1, 2),
 ) -> mx.array:
     """Process a tensor in overlapping spatial tiles with linear blending.
 
@@ -54,12 +44,8 @@ def tiled_process(
 
     stride = tile_size - overlap
 
-    h_starts = list(range(0, max(H - tile_size, 0) + 1, stride))
-    if h_starts[-1] + tile_size < H:
-        h_starts.append(H - tile_size)
-    w_starts = list(range(0, max(W - tile_size, 0) + 1, stride))
-    if w_starts[-1] + tile_size < W:
-        w_starts.append(W - tile_size)
+    h_starts = window_starts(H, tile_size, stride)
+    w_starts = window_starts(W, tile_size, stride)
 
     # Process first tile to determine output shape/dtype
     slices_0 = [slice(None)] * x.ndim
@@ -96,12 +82,12 @@ def tiled_process(
             blend_h = int(overlap * scale_h)
             blend_w = int(overlap * scale_w)
 
-            h_w = _blend_weight_1d(
+            h_w = blend_weight_1d(
                 th,
                 blend_left=blend_h if hs > 0 else 0,
                 blend_right=blend_h if hs + tile_size < H else 0,
             )
-            w_w = _blend_weight_1d(
+            w_w = blend_weight_1d(
                 tw,
                 blend_left=blend_w if ws > 0 else 0,
                 blend_right=blend_w if ws + tile_size < W else 0,

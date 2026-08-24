@@ -20,7 +20,7 @@ def interpolate(
     """
     # Map background (0) to face 0 to avoid out-of-bounds; barycentric is zero
     # there so the result is zero regardless.
-    f = face_indices - 1 + (face_indices == 0).astype(mx.int32)  # ty: ignore[unresolved-attribute]
+    f = face_indices - 1 + mx.equal(face_indices, 0).astype(mx.int32)
     tri_verts = faces[f]  # (H, W, 3)
 
     v0 = attributes[tri_verts[..., 0]]  # (H, W, C)

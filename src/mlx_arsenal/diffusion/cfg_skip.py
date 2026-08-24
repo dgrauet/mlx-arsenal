@@ -26,6 +26,7 @@ from typing import Literal
 
 import mlx.core as mx
 
+from ._cache_common import check_step
 from .attention_cache import splice_heads
 
 Metric = Literal["cosine", "relative_l1"]
@@ -256,5 +257,4 @@ class CFGSkipController:
         return splice_heads(cond_output, uncond_output, self._schedule[block_idx])
 
     def _check_block(self, block_idx: int) -> None:
-        if block_idx < 0 or block_idx >= self.num_blocks:
-            raise ValueError(f"block_idx must be in [0, {self.num_blocks}), got {block_idx}")
+        check_step(block_idx, self.num_blocks, what="block_idx")

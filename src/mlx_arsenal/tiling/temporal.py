@@ -8,17 +8,7 @@ from collections.abc import Callable
 
 import mlx.core as mx
 
-
-def _blend_weight_1d(size: int, blend_left: int, blend_right: int) -> mx.array:
-    """Create a 1D blending weight: ramp up at left, flat in middle, ramp down at right."""
-    w = mx.ones((size,), dtype=mx.float32)
-    if blend_left > 0:
-        ramp = mx.linspace(0, 1, blend_left + 2)[1:-1]
-        w = mx.concatenate([ramp, w[blend_left:]])
-    if blend_right > 0:
-        ramp = mx.linspace(1, 0, blend_right + 2)[1:-1]
-        w = mx.concatenate([w[: size - blend_right], ramp])
-    return w
+from mlx_arsenal.tiling._blend import blend_weight_1d, window_starts
 
 
 def temporal_slice_process(
@@ -52,9 +42,7 @@ def temporal_slice_process(
 
     stride = window_size - overlap
 
-    starts = list(range(0, max(T - window_size, 0) + 1, stride))
-    if starts[-1] + window_size < T:
-        starts.append(T - window_size)
+    starts = window_starts(T, window_size, stride)
 
     # Process first window to get output info
     slices_0 = [slice(None)] * x.ndim
@@ -79,7 +67,7 @@ def temporal_slice_process(
         ot = int(ts * scale_t)
         blend = int(overlap * scale_t)
 
-        t_weight = _blend_weight_1d(
+        t_weight = blend_weight_1d(
             wt,
             blend_left=blend if ts > 0 else 0,
             blend_right=blend if ts + window_size < T else 0,

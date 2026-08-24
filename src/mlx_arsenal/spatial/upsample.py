@@ -2,9 +2,14 @@
 
 import mlx.core as mx
 
+from mlx_arsenal.spatial.interpolate import interpolate_nearest
+
 
 def upsample_nearest(x: mx.array, scale_factor: int = 2) -> mx.array:
     """Nearest-neighbor upsampling for spatial tensors.
+
+    Thin wrapper over :func:`mlx_arsenal.spatial.interpolate_nearest` that
+    additionally rejects non-4D/5D inputs.
 
     Args:
         x: Input tensor (B, H, W, C) or (B, D, H, W, C).
@@ -12,33 +17,13 @@ def upsample_nearest(x: mx.array, scale_factor: int = 2) -> mx.array:
 
     Returns:
         Upsampled tensor.
+
+    Raises:
+        ValueError: if ``x`` is not 4D or 5D.
     """
-    if x.ndim == 4:
-        B, H, W, C = x.shape
-        x = mx.expand_dims(x, axis=2)  # (B, H, 1, W, C)
-        x = mx.repeat(x, scale_factor, axis=2)  # (B, H, s, W, C)
-        x = x.reshape(B, H * scale_factor, W, C)
-        x = mx.expand_dims(x, axis=3)  # (B, H*s, W, 1, C)
-        x = mx.repeat(x, scale_factor, axis=3)  # (B, H*s, W, s, C)
-        return x.reshape(B, H * scale_factor, W * scale_factor, C)
-
-    elif x.ndim == 5:
-        B, D, H, W, C = x.shape
-        # Upsample depth
-        x = mx.expand_dims(x, axis=2)
-        x = mx.repeat(x, scale_factor, axis=2)
-        x = x.reshape(B, D * scale_factor, H, W, C)
-        # Upsample height
-        x = mx.expand_dims(x, axis=3)
-        x = mx.repeat(x, scale_factor, axis=3)
-        x = x.reshape(B, D * scale_factor, H * scale_factor, W, C)
-        # Upsample width
-        x = mx.expand_dims(x, axis=4)
-        x = mx.repeat(x, scale_factor, axis=4)
-        return x.reshape(B, D * scale_factor, H * scale_factor, W * scale_factor, C)
-
-    else:
+    if x.ndim not in (4, 5):
         raise ValueError(f"Expected 4D or 5D input, got {x.ndim}D")
+    return interpolate_nearest(x, scale_factor=float(scale_factor))
 
 
 def upsample_bilinear(x: mx.array, scale_factor: int = 2) -> mx.array:
