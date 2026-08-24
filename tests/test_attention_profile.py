@@ -115,6 +115,39 @@ class TestClassifyHeadsFromProbs:
             classify_heads_from_probs(mx.ones((1, 1, S, S + 1)), T, H, W)
 
 
+class TestClassifierAgreement:
+    def test_qk_matches_probs_on_full_sample(self):
+        # With n_samples=S every query is sampled, so the sampled estimator
+        # averages the exact same per-query masses as the full-probs path —
+        # the two classifiers must agree numerically and in labels.
+        T, H, W, D = 2, 2, 2, 4
+        S = T * H * W
+        q = mx.random.normal((1, 3, S, D), key=mx.random.key(0))
+        k = mx.random.normal((1, 3, S, D), key=mx.random.key(1))
+        scale = 1.0 / mx.sqrt(mx.array(D, dtype=q.dtype))
+        probs = mx.softmax(mx.matmul(q, mx.swapaxes(k, 2, 3)) * scale, axis=-1)
+        from_probs = classify_heads_from_probs(probs, T, H, W)
+        from_qk = classify_heads_from_qk(q, k, T, H, W, n_samples=S)
+        assert mx.allclose(from_probs, from_qk, atol=1e-5).item()
+        assert classify(from_probs) == classify(from_qk)
+
+    def test_agreement_on_unambiguous_spatial_heads(self):
+        # Frame-aligned one-hot Q/K concentrate mass on same-frame keys —
+        # far from the 0.5 threshold, so both classifiers must say SPATIAL.
+        T, H, W = 2, 2, 2
+        S = T * H * W
+        D = T
+        ids = mx.repeat(mx.arange(T), H * W)
+        onehot = mx.take(mx.eye(D), ids, axis=0)
+        q = mx.broadcast_to((onehot * 20.0).reshape(1, 1, S, D), (1, 2, S, D))
+        k = mx.broadcast_to(onehot.reshape(1, 1, S, D), (1, 2, S, D))
+        scale = 1.0 / mx.sqrt(mx.array(D, dtype=q.dtype))
+        probs = mx.softmax(mx.matmul(q, mx.swapaxes(k, 2, 3)) * scale, axis=-1)
+        labels_probs = classify(classify_heads_from_probs(probs, T, H, W))
+        labels_qk = classify(classify_heads_from_qk(q, k, T, H, W, n_samples=S))
+        assert labels_probs == labels_qk == [Kind.SPATIAL, Kind.SPATIAL]
+
+
 class TestClassifyHeadsFromQK:
     def test_shape(self):
         T, H, W = 2, 2, 2

@@ -491,3 +491,124 @@ class TestDepthPriorValidation:
         bad = mx.zeros((height + 1, width), dtype=mx.float32)
         with pytest.raises(ValueError):
             rasterize_triangles(vertices, faces, width, height, depth_prior=bad)
+
+
+class TestInterpolationChannelCounts:
+    """interpolate() with attribute channel counts other than 3."""
+
+    def _render(self, w=16, h=16):
+        vertices, faces = _make_triangle_mesh(
+            [
+                _clip_vertex(-0.8, -0.8, 0.5),
+                _clip_vertex(0.8, -0.8, 0.5),
+                _clip_vertex(0.0, 0.8, 0.5),
+            ],
+            [[0, 1, 2]],
+        )
+        fi, bary = rasterize_triangles(vertices, faces, w, h)
+        mx.synchronize()
+        assert item_int(mx.sum(fi > 0)) > 0
+        assert item_int(mx.sum(mx.equal(fi, 0))) > 0
+        return vertices, faces, fi, bary
+
+    @pytest.mark.parametrize("channels", [1, 5])
+    def test_shape_values_and_background(self, channels):
+        w, h = 16, 16
+        _, faces, fi, bary = self._render(w, h)
+
+        attrs = mx.arange(3 * channels, dtype=mx.float32).reshape(3, channels) + 1.0
+        result = interpolate(attrs, fi, bary, faces)
+        mx.synchronize()
+        assert result.shape == (h, w, channels)
+
+        # Covered pixels: result must equal the barycentric combination of
+        # the face's vertex attributes (the face is [0, 1, 2] here).
+        expected = bary[..., 0:1] * attrs[0] + bary[..., 1:2] * attrs[1] + bary[..., 2:3] * attrs[2]
+        covered = (fi > 0).astype(mx.float32)[..., None]
+        assert mx.allclose(result * covered, expected * covered).item()
+
+        # Background pixels are exactly 0.0 (bary is exactly zero there),
+        # asserted as equality, not allclose.
+        bg = mx.equal(fi, 0)[..., None]
+        assert mx.all(mx.equal(mx.where(bg, result, mx.zeros_like(result)), 0.0)).item()
+
+
+class TestDepthPriorSemantics:
+    """Non-trivial depth_prior at the public API level.
+
+    Kernel comparison (_tile_raster.py): a fragment is *skipped* when
+    ``depth < prior_mapped + occlusion_truncation`` — i.e. geometry strictly
+    IN FRONT of the prior (smaller mapped depth) is CULLED, and geometry at
+    or behind the prior is KEPT. This is the direction the code implements;
+    these tests pin it explicitly.
+    """
+
+    W = H = 16
+
+    def _tri(self, z):
+        return _make_triangle_mesh(
+            [
+                _clip_vertex(-0.5, -0.5, z),
+                _clip_vertex(0.5, -0.5, z),
+                _clip_vertex(0.0, 0.5, z),
+            ],
+            [[0, 1, 2]],
+        )
+
+    def _prior_from_first_render(self):
+        """Render a triangle at z=0.5 and turn its returned depth into a prior.
+
+        The returned depth is post-mapping (z_ndc * 0.49999 + 0.5); the prior
+        is expected in NDC z, so it must be unmapped first — the docstring
+        warns that feeding the returned depth straight back double-maps it.
+        Background pixels get -1e30 (the loader's own open sentinel) so the
+        prior only constrains pixels the first render covered.
+        """
+        v, f = self._tri(0.5)
+        fi, _, depth = rasterize_triangles(v, f, self.W, self.H, return_depth=True)
+        mx.synchronize()
+        covered = fi > 0
+        assert item_int(mx.sum(covered)) > 0
+        ndc = (depth - 0.5) / 0.49999
+        prior = mx.where(covered, ndc, mx.full((self.H, self.W), -1e30, dtype=mx.float32))
+        return prior, covered
+
+    def test_geometry_in_front_of_prior_is_culled(self):
+        prior, _ = self._prior_from_first_render()
+        # Same footprint as the prior-generating triangle, but nearer
+        # (z=0.2 < 0.5): every fragment lands where the prior is 0.5 and has
+        # mapped depth below prior_mapped, so the kernel skips all of them.
+        v, f = self._tri(0.2)
+        fi, _ = rasterize_triangles(v, f, self.W, self.H, depth_prior=prior)
+        mx.synchronize()
+        assert item_int(mx.sum(fi > 0)) == 0
+
+    def test_geometry_behind_prior_is_kept(self):
+        prior, covered = self._prior_from_first_render()
+        # Farther (z=0.8 > 0.5): mapped depth exceeds prior_mapped + occl,
+        # so the full footprint survives.
+        v, f = self._tri(0.8)
+        fi, _ = rasterize_triangles(v, f, self.W, self.H, depth_prior=prior)
+        mx.synchronize()
+        assert bool(mx.array_equal(fi > 0, covered).item())
+
+    def test_occlusion_truncation_widens_culled_band(self):
+        # Uniform prior at NDC z=0.5; triangle just behind it at z=0.52.
+        # Kernel: skip when depth < prior_mapped + occl. With occl=0 the
+        # fragment (mapped ~0.760) clears the threshold (~0.750) and
+        # survives; occl=0.05 pushes the threshold to ~0.800, so a larger
+        # truncation culls geometry sitting just behind the prior.
+        prior = mx.full((self.H, self.W), 0.5, dtype=mx.float32)
+        v, f = self._tri(0.52)
+
+        fi_zero, _ = rasterize_triangles(
+            v, f, self.W, self.H, depth_prior=prior, occlusion_truncation=0.0
+        )
+        mx.synchronize()
+        assert item_int(mx.sum(fi_zero > 0)) > 0
+
+        fi_trunc, _ = rasterize_triangles(
+            v, f, self.W, self.H, depth_prior=prior, occlusion_truncation=0.05
+        )
+        mx.synchronize()
+        assert item_int(mx.sum(fi_trunc > 0)) == 0

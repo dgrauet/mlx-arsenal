@@ -139,6 +139,30 @@ class TestScaleShiftTable:
             assert c.shape == (2, 1, 8)
 
 
+class TestValidation:
+    def test_adaln_num_chunks_zero_raises(self):
+        with pytest.raises(ValueError, match="num_chunks"):
+            AdaLNModulation(dim=4, num_chunks=0)
+
+    def test_adaln_num_chunks_negative_raises(self):
+        with pytest.raises(ValueError, match="num_chunks"):
+            AdaLNModulation(dim=4, num_chunks=-1)
+
+    def test_scale_shift_table_wrong_row_count_raises(self):
+        # A (4, dim) table with num_params=2 splits "evenly" into two
+        # (B, 2, dim) chunks — silent misbehavior without validation.
+        tbl = ScaleShiftTable(dim=4, num_params=2)
+        tbl.table = mx.zeros((4, 4))
+        with pytest.raises(ValueError, match="table"):
+            tbl(mx.zeros((1, 4)))
+
+    def test_scale_shift_table_non_dividing_table_raises(self):
+        tbl = ScaleShiftTable(dim=4, num_params=2)
+        tbl.table = mx.zeros((3, 4))
+        with pytest.raises(ValueError, match="table"):
+            tbl(mx.zeros((1, 4)))
+
+
 class TestIntegration:
     """End-to-end test of a small DiT-style block using all primitives."""
 

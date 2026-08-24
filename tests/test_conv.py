@@ -33,7 +33,7 @@ class TestWeightNorm:
         norms = mx.sqrt(mx.sum(w * w, axis=1))
         expected = wn.g.squeeze()
         mx.eval(norms, expected)
-        assert mx.allclose(norms, expected, atol=1e-5)
+        assert mx.allclose(norms, expected, atol=1e-5).item()
 
 
 class TestWeightNormStateIntegrity:
@@ -79,3 +79,46 @@ class TestWeightNormStateIntegrity:
             wn(mx.ones((1, 2)))
         assert mx.array_equal(boom.weight, original).item()
         assert "weight" not in boom.__dict__
+
+
+class TestWeightNormVariants:
+    def test_dim_1_normalizes_over_other_axes(self):
+        """dim=1 keeps per-input-channel magnitudes: norm over axis 0."""
+        lin = nn.Linear(4, 3)
+        wn = weight_norm(lin, dim=1)
+        assert wn.g.shape == (1, 4)
+        x = mx.random.normal((2, 4))
+        v = wn.v
+        norm = mx.sqrt(mx.sum(v * v, axis=0, keepdims=True) + 1e-12)
+        expected = x @ (wn.g * (v / norm)).T + lin.bias
+        assert mx.allclose(wn(x), expected, atol=1e-6).item()
+
+    def test_custom_weight_name(self):
+        class Kernelized(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.kernel = mx.random.normal((3, 4))
+
+            def __call__(self, x: mx.array) -> mx.array:
+                return x @ self.kernel.T
+
+        mod = Kernelized()
+        original = mod.kernel
+        wn = weight_norm(mod, weight_name="kernel")
+        x = mx.random.normal((2, 4))
+        norm = mx.sqrt(mx.sum(wn.v * wn.v, axis=1, keepdims=True) + 1e-12)
+        expected = x @ (wn.g * (wn.v / norm)).T
+        assert mx.allclose(wn(x), expected, atol=1e-6).item()
+        # Wrapped param untouched after the call.
+        assert mx.array_equal(mod.kernel, original).item()
+
+    def test_reentrant_calls_identical_and_side_effect_free(self):
+        lin = nn.Linear(4, 3)
+        wn = weight_norm(lin)
+        original = lin.weight
+        x = mx.random.normal((2, 4))
+        out1 = wn(x)
+        out2 = wn(x)
+        assert mx.allclose(out1, out2, atol=1e-6).item()
+        assert mx.array_equal(lin.weight, original).item()
+        assert "weight" not in lin.__dict__

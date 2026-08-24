@@ -1,6 +1,7 @@
 """Tests for spatial module."""
 
 import mlx.core as mx
+import pytest
 
 from mlx_arsenal._typing import array_from_any, item_float
 from mlx_arsenal.spatial import (
@@ -28,7 +29,7 @@ class TestPatchify2d:
         patches = patchify(x, patch_size=4)
         reconstructed = unpatchify(patches, patch_size=4, shape=(8, 8))
         mx.eval(x, reconstructed)
-        assert mx.allclose(x, reconstructed, atol=1e-5)
+        assert mx.allclose(x, reconstructed, atol=1e-5).item()
 
     def test_tuple_patch_size_roundtrip(self):
         # Non-square patch via tuple — exercises the tuple-unpack branch.
@@ -52,7 +53,7 @@ class TestPatchify3d:
         patches = patchify(x, patch_size=(2, 4, 4))
         reconstructed = unpatchify(patches, patch_size=(2, 4, 4), shape=(4, 8, 8))
         mx.eval(x, reconstructed)
-        assert mx.allclose(x, reconstructed, atol=1e-5)
+        assert mx.allclose(x, reconstructed, atol=1e-5).item()
 
     def test_int_patch_size_roundtrip(self):
         # Uniform int patch_size — exercises the int-broadcast branch.
@@ -144,7 +145,7 @@ class TestPixelShuffle:
         shuffled = pixel_shuffle(x, upscale_factor=2)
         unshuffled = pixel_unshuffle(shuffled, downscale_factor=2)
         mx.eval(x, unshuffled)
-        assert mx.allclose(x, unshuffled, atol=1e-5)
+        assert mx.allclose(x, unshuffled, atol=1e-5).item()
 
 
 class TestPixelUnshuffle:
@@ -190,7 +191,7 @@ class TestPixelShufflePyTorchParity:
         x = array_from_any(x_np)
         out = pixel_shuffle(x, upscale_factor=r)
         expected = self._pt_shuffle_spec(x, r)
-        assert mx.allclose(out, expected, atol=1e-6)
+        assert mx.allclose(out, expected, atol=1e-6).item()
 
     def test_unshuffle_is_true_inverse(self):
         """Unshuffle then shuffle must recover the input exactly."""
@@ -201,7 +202,35 @@ class TestPixelShufflePyTorchParity:
         x = array_from_any(x_np)
         down = pixel_unshuffle(x, downscale_factor=r)
         up = pixel_shuffle(down, upscale_factor=r)
-        assert mx.allclose(x, up, atol=1e-6)
+        assert mx.allclose(x, up, atol=1e-6).item()
 
         up_via_spec = TestPixelShufflePyTorchParity._pt_shuffle_spec(down, r)
-        assert mx.allclose(up, up_via_spec, atol=1e-6)
+        assert mx.allclose(up, up_via_spec, atol=1e-6).item()
+
+
+class TestUpsampleBilinearReference:
+    def test_2x2_to_4x4_hand_computed(self):
+        """Center-aligned mapping: src = clip((i + 0.5)/2 - 0.5, 0, H-1) gives
+        source coords [0, 0.25, 0.75, 1] for scale_factor=2 on a 2-pixel axis.
+        With input value = 2*row + col (linear), bilinear is exact:
+        out[i][j] = 2*rc[i] + rc[j]."""
+        x = mx.array([[0.0, 1.0], [2.0, 3.0]]).reshape(1, 2, 2, 1)
+        out = upsample_bilinear(x, scale_factor=2)
+        rc = [0.0, 0.25, 0.75, 1.0]
+        expected = mx.array([[2.0 * r + c for c in rc] for r in rc]).reshape(1, 4, 4, 1)
+        assert out.shape == (1, 4, 4, 1)
+        assert mx.allclose(out, expected, atol=1e-6).item()
+
+
+class TestPatchifyErrors:
+    def test_patchify_3d_input_raises(self):
+        # (B, L, C) sequences are not patchifiable — only 4D/5D spatial inputs.
+        with pytest.raises(ValueError, match="4D or 5D"):
+            patchify(mx.ones((1, 8, 3)), patch_size=2)
+
+    def test_unpatchify_wrong_shape_length_raises(self):
+        patches = mx.ones((1, 4, 12))
+        with pytest.raises(ValueError, match="2 or 3"):
+            unpatchify(patches, patch_size=2, shape=(4,))
+        with pytest.raises(ValueError, match="2 or 3"):
+            unpatchify(patches, patch_size=2, shape=(2, 2, 2, 2))

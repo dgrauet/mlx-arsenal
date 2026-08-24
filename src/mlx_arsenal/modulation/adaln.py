@@ -109,6 +109,8 @@ class AdaLNModulation(nn.Module):
         bias: bool = True,
     ) -> None:
         super().__init__()
+        if num_chunks < 1:
+            raise ValueError(f"num_chunks must be >= 1, got {num_chunks}")
         self.dim = dim
         self.num_chunks = num_chunks
         self.use_silu = use_silu
@@ -169,6 +171,11 @@ class ScaleShiftTable(nn.Module):
             Tuple of ``num_params`` arrays, each ``(B, 1, dim)``.
             Already shape-ready to broadcast over a sequence axis.
         """
+        if self.table.shape[0] != self.num_params:
+            raise ValueError(
+                f"table must have num_params={self.num_params} rows to split "
+                f"evenly, got shape {self.table.shape}"
+            )
         # table is (num_params, dim); broadcast to (B, num_params, dim)
         # by adding the (B, 1, dim) embedded vector.
         combined = self.table[None, :, :] + embedded[:, None, :]

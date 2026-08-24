@@ -390,6 +390,102 @@ class TestFlowMatchDiffusersParity:
             sched.step(v, sched.timesteps[1], x)
 
 
+class TestFlowMatchShiftedSchedule:
+    @pytest.mark.parametrize("shift", [0.5, 3.0])
+    def test_sigmas_descend_with_terminal_zero(self, shift):
+        sched = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=shift)
+        sched.set_timesteps(num_inference_steps=8)
+        assert sched.sigmas is not None
+        sigmas = [item_float(s) for s in sched.sigmas]
+        # shift reparametrizes the spacing but keeps the 1 → 0 envelope:
+        # sigma(1) = shift/(1 + (shift-1)) = 1, and the terminal 0.0 is appended.
+        assert sigmas[0] == pytest.approx(1.0)
+        assert sigmas[-1] == 0.0
+        assert all(a > b for a, b in zip(sigmas[:-1], sigmas[1:], strict=False))
+
+    @pytest.mark.parametrize("shift", [0.5, 3.0])
+    def test_euler_loop_recovers_clean_sample(self, shift):
+        # The linear flow-matching path has constant velocity (noise - x0), so
+        # exact Euler integration recovers x0 regardless of sigma spacing —
+        # shift only moves the interior grid points.
+        sched = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=shift)
+        sched.set_timesteps(num_inference_steps=8)
+        x0 = mx.arange(8, dtype=mx.float32).reshape(1, 8) / 8.0
+        noise = mx.ones((1, 8)) * 3.0
+        velocity = noise - x0
+        x = noise
+        assert sched.timesteps is not None
+        for t in sched.timesteps:
+            x = sched.step(velocity, t, x)
+        assert mx.allclose(x, x0, atol=1e-5).item()
+
+
+class TestDynamicShiftExtrapolation:
+    @pytest.mark.parametrize("num_tokens", [64, 128, 100000])
+    def test_out_of_range_tokens_stay_finite_and_descending(self, num_tokens):
+        # 64/128 sit below base_tokens=1024, 100000 above max_tokens=4096 —
+        # the shift is linearly extrapolated. Very large token counts saturate
+        # the leading sigmas at exactly 1.0, so descent is non-strict.
+        sigmas = dynamic_shift_schedule(num_steps=6, num_tokens=num_tokens)
+        assert len(sigmas) == 7
+        for s in sigmas:
+            assert math.isfinite(s)
+        assert sigmas[0] == pytest.approx(1.0)
+        assert sigmas[-1] == 0.0
+        assert all(a >= b for a, b in zip(sigmas[:-1], sigmas[1:], strict=False))
+
+    def test_stretch_terminal_one_collapses_schedule(self):
+        # Documented actual behavior (defect-adjacent, not inf/nan): with
+        # terminal=1.0 the stretch scale factor is x / 0.0 = +inf (numpy emits
+        # RuntimeWarning), and every non-zero sigma collapses to exactly 1.0 —
+        # a degenerate schedule where all denoising happens in the final step.
+        with pytest.warns(RuntimeWarning):
+            sigmas = dynamic_shift_schedule(
+                num_steps=6, num_tokens=2048, stretch=True, terminal=1.0
+            )
+        for s in sigmas:
+            assert math.isfinite(s)
+        assert sigmas[:-1] == [1.0] * 6
+        assert sigmas[-1] == 0.0
+
+
+class TestTimestepEmbeddingParams:
+    def test_scale_is_pre_sincos_angle_multiplier(self):
+        # args = scale * (t * freqs), so emb(scale=2, t) == emb(scale=1, 2t).
+        t = mx.array([3.0, 17.0])
+        a = get_timestep_embedding(t, embedding_dim=16, scale=2.0)
+        b = get_timestep_embedding(t * 2.0, embedding_dim=16, scale=1.0)
+        assert mx.allclose(a, b, atol=1e-6).item()
+        # And it is an observable change vs the default.
+        c = get_timestep_embedding(t, embedding_dim=16, scale=1.0)
+        assert not mx.allclose(a, c).item()
+
+    def test_max_period_one_collapses_all_frequencies(self):
+        # max_period=1 → log(max_period)=0 → every frequency is exactly 1, so
+        # each half is a constant column of cos(t) / sin(t).
+        t = mx.array([3.0, 17.0])
+        out = get_timestep_embedding(t, embedding_dim=16, max_period=1.0)
+        expected = mx.concatenate(
+            [
+                mx.broadcast_to(mx.cos(t)[:, None], (2, 8)),
+                mx.broadcast_to(mx.sin(t)[:, None], (2, 8)),
+            ],
+            axis=-1,
+        )
+        assert mx.allclose(out, expected, atol=1e-5).item()
+
+    def test_downscale_freq_shift_changes_interior_frequencies(self):
+        # The shift rescales the exponent denominator (half - shift). The
+        # zeroth frequency has exponent 0 and is unaffected; the rest move.
+        t = mx.array([3.0, 17.0])
+        a = get_timestep_embedding(t, embedding_dim=16, downscale_freq_shift=0.0)
+        b = get_timestep_embedding(t, embedding_dim=16, downscale_freq_shift=1.0)
+        assert a.shape == b.shape == (2, 16)
+        assert not mx.allclose(a, b).item()
+        # Columns 0 (cos half) and 8 (sin half) carry frequency index 0.
+        assert mx.allclose(a[:, [0, 8]], b[:, [0, 8]]).item()
+
+
 class TestDDIMScheduleConsistency:
     def test_prev_timestep_matches_schedule_trailing(self):
         sched = DDIMScheduler(num_inference_steps=7, timestep_spacing="trailing")

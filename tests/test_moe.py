@@ -1,3 +1,5 @@
+from typing import cast
+
 import mlx.core as mx
 import mlx.nn as nn
 import pytest
@@ -153,6 +155,82 @@ class TestMoELayer:
         x = mx.random.normal((2, 5, hidden), dtype=mx.float16)
         y = layer(x)
         assert y.dtype == mx.float16
+
+
+class _IdentityExpert(nn.Module):
+    """Expert that returns its input unchanged."""
+
+    def __call__(self, x: mx.array) -> mx.array:
+        return x
+
+
+class TestMoEGateFullSelection:
+    def test_top_k_equals_num_experts_argsort_branch(self):
+        # top_k == num_experts exercises the argsort branch: indices are a
+        # permutation of all experts and the gathered weights are the full
+        # softmax row (sum to 1).
+        gate = MoEGate(hidden_size=16, num_experts=4, top_k=4)
+        x = mx.random.normal((10, 16), key=mx.random.key(0))
+        indices, weights = gate(x)
+        assert indices.shape == (10, 4)
+        assert weights.shape == (10, 4)
+        for row in cast(list[list[int]], indices.tolist()):
+            assert sorted(row) == [0, 1, 2, 3]
+        assert mx.allclose(mx.sum(weights, axis=-1), mx.ones((10,)), atol=1e-5).item()
+
+    def test_weights_match_manual_softmax_gather(self):
+        gate = MoEGate(hidden_size=16, num_experts=4, top_k=4)
+        x = mx.random.normal((10, 16), key=mx.random.key(1))
+        indices, weights = gate(x)
+        scores = mx.softmax(gate.gate(x), axis=-1)
+        expected = mx.take_along_axis(scores, indices, axis=-1)
+        assert mx.allclose(weights, expected, atol=1e-6).item()
+
+
+class TestMoELayerWeightedSum:
+    def test_full_selection_identity_experts_is_identity(self):
+        # With identity experts, output = sum_k(weight_k) * x. When
+        # top_k == num_experts the weights are a full softmax row (sum 1),
+        # so the layer is exactly the identity.
+        layer = MoELayer(
+            hidden_size=8,
+            num_experts=3,
+            top_k=3,
+            expert_fn=_IdentityExpert,
+        )
+        x = mx.random.normal((2, 5, 8), key=mx.random.key(2))
+        y = layer(x)
+        assert mx.allclose(y, x, atol=1e-5).item()
+
+    def test_shared_expert_contribution_adds(self):
+        # Identity routed experts (weights sum to 1) + identity shared
+        # expert → output == x + x == 2x.
+        layer = MoELayer(
+            hidden_size=8,
+            num_experts=3,
+            top_k=3,
+            expert_fn=_IdentityExpert,
+            shared_expert=_IdentityExpert(),
+        )
+        x = mx.random.normal((2, 5, 8), key=mx.random.key(3))
+        y = layer(x)
+        assert mx.allclose(y, 2.0 * x, atol=1e-5).item()
+
+    def test_partial_top_k_output_scales_by_routing_weight_sum(self):
+        # With top_k < num_experts and identity experts, each token's output
+        # is (sum of its top-k routing weights) * x.
+        layer = MoELayer(
+            hidden_size=8,
+            num_experts=4,
+            top_k=2,
+            expert_fn=_IdentityExpert,
+        )
+        x = mx.random.normal((3, 4, 8), key=mx.random.key(4))
+        hidden = x.reshape(-1, 8)
+        _, weights = layer.gate(hidden)
+        expected = (mx.sum(weights, axis=-1, keepdims=True) * hidden).reshape(x.shape)
+        y = layer(x)
+        assert mx.allclose(y, expected, atol=1e-5).item()
 
 
 class TestMoEGateValidation:

@@ -248,3 +248,72 @@ class TestApplyRotaryEmbSeqAxis:
         for b in range(4):
             per_sample = apply_rotary_emb(x[b], cos, sin)
             assert mx.allclose(out[b], per_sample, atol=1e-6).item()
+
+
+class TestRopeFrequenciesNDInterpolation:
+    def test_interpolation_factor_equals_prescaled_grids(self):
+        """interpolation_factor scales positions before frequency computation:
+        per-axis factors must equal passing pre-scaled position grids."""
+        g0 = mx.arange(6).astype(mx.float32)
+        g1 = (mx.arange(6) % 3).astype(mx.float32)
+        cos_a, sin_a = rope_frequencies_nd(
+            dims_per_axis=[4, 6],
+            position_grids=[g0, g1],
+            interpolation_factor=[2.0, 3.0],
+        )
+        cos_b, sin_b = rope_frequencies_nd(
+            dims_per_axis=[4, 6],
+            position_grids=[g0 * 2.0, g1 * 3.0],
+        )
+        assert mx.allclose(cos_a, cos_b, atol=1e-6).item()
+        assert mx.allclose(sin_a, sin_b, atol=1e-6).item()
+
+    def test_scalar_interpolation_broadcasts(self):
+        g = mx.arange(4).astype(mx.float32)
+        cos_a, sin_a = rope_frequencies_nd(
+            dims_per_axis=[4, 4],
+            position_grids=[g, g],
+            interpolation_factor=0.5,
+        )
+        cos_b, sin_b = rope_frequencies_nd(
+            dims_per_axis=[4, 4],
+            position_grids=[g * 0.5, g * 0.5],
+        )
+        assert mx.allclose(cos_a, cos_b, atol=1e-6).item()
+        assert mx.allclose(sin_a, sin_b, atol=1e-6).item()
+
+
+class TestMeshgridNDSingleAxis:
+    def test_single_axis_is_arange(self):
+        grids = meshgrid_nd([5])
+        assert len(grids) == 1
+        assert grids[0].tolist() == [0.0, 1.0, 2.0, 3.0, 4.0]
+
+
+class TestApplyRotaryEmbHalfRotatedReference:
+    def test_hf_rotate_half_hand_computed(self):
+        """interleaved=False against a hand-built HF-style reference (S=2, D=4).
+
+        Non-interleaved: cos/sin of shape (S, D/2) are tiled to (S, D) by
+        concatenation, and rotate_half maps [x0, x1, x2, x3] to
+        [-x2, -x3, x0, x1]. Expected = x*cos + rotate_half(x)*sin.
+        """
+        theta = 10000.0
+        # freqs for D=4: [1/theta^0, 1/theta^(2/4)] = [1.0, 0.01]
+        f0, f1 = 1.0, 1.0 / theta**0.5
+        positions = [0.0, 1.0]
+        x = mx.array([[[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]]])  # (1, 2, 4)
+
+        expected_rows = []
+        for s, pos in enumerate(positions):
+            a0, a1 = pos * f0, pos * f1
+            cos_full = [math.cos(a0), math.cos(a1), math.cos(a0), math.cos(a1)]
+            sin_full = [math.sin(a0), math.sin(a1), math.sin(a0), math.sin(a1)]
+            row = [item_float(x[0, s, d]) for d in range(4)]
+            rot = [-row[2], -row[3], row[0], row[1]]
+            expected_rows.append([row[d] * cos_full[d] + rot[d] * sin_full[d] for d in range(4)])
+        expected = mx.array([expected_rows])
+
+        cos, sin = rope_frequencies_1d(dim=4, positions=mx.array(positions), theta=theta)
+        out = apply_rotary_emb(x, cos, sin, interleaved=False)
+        assert mx.allclose(out, expected, atol=1e-5).item()

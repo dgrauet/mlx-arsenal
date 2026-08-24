@@ -67,6 +67,23 @@ class TestSlidingWindowMask:
                 else:
                     assert math.isinf(value) and value < 0
 
+    def test_kv_offset_window(self):
+        # seq_len=3, window=2, offset=2 → total KV length 5. Row i sits at
+        # absolute position i+2 and sees [pos - 1, pos]:
+        #   row 0 (pos 2): cols 1, 2
+        #   row 1 (pos 3): cols 2, 3
+        #   row 2 (pos 4): cols 3, 4
+        m = sliding_window_mask(seq_len=3, window_size=2, offset=2)
+        assert m.shape == (1, 1, 3, 5)
+        grid = cast(list[list[float]], m[0, 0].tolist())
+        expected_valid = [{1, 2}, {2, 3}, {3, 4}]
+        for i in range(3):
+            for j in range(5):
+                if j in expected_valid[i]:
+                    assert grid[i][j] == 0.0, f"row {i} col {j}"
+                else:
+                    assert math.isinf(grid[i][j]) and grid[i][j] < 0, f"row {i} col {j}"
+
     def test_window_larger_than_seq_is_fully_causal(self):
         causal = causal_mask(seq_len=4)[0, 0]
         windowed = sliding_window_mask(seq_len=4, window_size=100)[0, 0]
