@@ -35,7 +35,10 @@ def read_safetensors_metadata(path: str | Path) -> dict[str, str]:
         ValueError: If the header is malformed.
     """
     with open(path, "rb") as f:
-        (header_len,) = struct.unpack("<Q", f.read(8))
+        prefix = f.read(8)
+        if len(prefix) != 8:
+            raise ValueError(f"truncated safetensors header in {path}")
+        (header_len,) = struct.unpack("<Q", prefix)
         if header_len <= 0 or header_len > 100 * 1024 * 1024:
             raise ValueError(f"implausible safetensors header length: {header_len}")
         header_bytes = f.read(header_len)
@@ -94,8 +97,13 @@ class SafetensorsStateDictLoader:
                     pairs = [KeyValueOperationResult(raw_key, raw_value)]
 
                 for key, val in pairs:
+                    prev = sd.get(key)
+                    if prev is not None:
+                        size -= prev.nbytes
                     size += val.nbytes
-                    dtypes.add(val.dtype)
                     sd[key] = val
 
+        # dtype reflects the tensors actually kept: recompute after
+        # overwrites rather than accumulating every dtype seen.
+        dtypes = {v.dtype for v in sd.values()}
         return StateDict(sd=sd, size=size, dtype=dtypes)

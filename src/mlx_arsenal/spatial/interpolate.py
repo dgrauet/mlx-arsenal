@@ -41,6 +41,11 @@ def interpolate_nearest(
             target = [size] * len(spatial_dims)
         else:
             target = list(size)
+            if len(target) != len(spatial_dims):
+                raise ValueError(
+                    f"size must have one entry per spatial dim "
+                    f"({len(spatial_dims)} for a {ndim}D input), got {len(target)}"
+                )
     else:
         # scale_factor is non-None here: the (None, None) case returned above.
         sf = cast(float, scale_factor)
