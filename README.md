@@ -28,12 +28,12 @@ pip install git+https://github.com/dgrauet/mlx-arsenal.git
 | `mlx_arsenal.spatial` | `interpolate_nearest`, `interpolate_3d`, `avg_pool1d`, `replicate_pad`, `upsample_nearest/bilinear`, `pixel_shuffle/unshuffle`, `patchify/unpatchify`, `PatchEmbed2d/3d` | `F.interpolate`, `F.avg_pool1d`, `F.pad(mode="replicate")`, `F.pixel_shuffle` |
 | `mlx_arsenal.layout` | `to_channels_last/first`, `channels_last` ctx manager, `convert_conv_weights`, `load_safetensors` | NCHW ↔ NHWC conversion, weight transposition |
 | `mlx_arsenal.conv` | `weight_norm`, `WeightNorm` | `nn.utils.weight_norm` |
-| `mlx_arsenal.attention` | `causal_mask`, `sliding_window_mask`, `spatial_only_mask`, `temporal_only_mask`, `sliding_tile_block_mask`, `sliding_tile_centered_mask`, `radial_box_mask`, `radial_gaussian_mask`, `classify_heads_from_qk`, `classify_heads_from_probs`, `classify`, `Kind`, `block_contiguous_permutation`, `invert_permutation` | Attention mask creation, head-pattern profiler, SVG2 block-contiguous token permutation |
+| `mlx_arsenal.attention` | `causal_mask`, `sliding_window_mask`, `spatial_only_mask`, `temporal_only_mask`, `sliding_tile_block_mask`, `sliding_tile_centered_mask`, `radial_box_mask`, `radial_gaussian_mask`, `frame_stride_diagonal_mask`, `vertical_stripe_mask`, `classify_heads_from_qk`, `classify_heads_from_probs`, `classify`, `Kind`, `block_contiguous_permutation`, `invert_permutation` | Attention mask creation (LLM + sparse video DiT), head-pattern profiler, SVG2 block-contiguous token permutation |
 | `mlx_arsenal.norm` | `PixelNorm`, `ScaleNorm` | Custom normalization layers |
 | `mlx_arsenal.encoding` | `FourierEmbedder` | Sinusoidal positional encoding |
-| `mlx_arsenal.diffusion` | `get_timestep_embedding`, `TimestepEmbedding`, `get_sampling_sigmas`, `dynamic_shift_schedule`, `FlowMatchEulerDiscreteScheduler`, `DDIMScheduler`, `euler_step`, `classifier_free_guidance`, `TeaCacheController`, `PerLayerAttentionCache`, `PerHeadAttentionCache`, `splice_heads`, `cfg_head_similarity`, `cfg_skip_mask`, `CFGSimilarityProfiler`, `CFGSkipController`, `WindowResidualController` | Flow-matching + DDIM diffusion primitives, TeaCache, AST attention caches, ASC cond/uncond skip, WA-RS residual sharing |
+| `mlx_arsenal.diffusion` | `get_timestep_embedding`, `TimestepEmbedding`, `get_sampling_sigmas`, `dynamic_shift_schedule`, `FlowMatchEulerDiscreteScheduler`, `DDIMScheduler`, `euler_step`, `classifier_free_guidance`, `TeaCacheController`, `PerLayerAttentionCache`, `PerHeadAttentionCache`, `splice_heads`, `cfg_head_similarity`, `cfg_skip_mask`, `CFGSimilarityProfiler`, `CFGSkipController`, `WindowResidualController`, `VerifiedFeatureCache`, `geometric_threshold` | Flow-matching + DDIM diffusion primitives, TeaCache, AST attention caches, ASC cond/uncond skip, WA-RS residual sharing |
 | `mlx_arsenal.moe` | `MoEGate`, `MoELayer` | Top-k mixture-of-experts dispatch |
-| `mlx_arsenal.rasterize` | `rasterize_triangles`, `interpolate` | Differentiable triangle rasterization with Metal z-buffer |
+| `mlx_arsenal.rasterize` | `rasterize_triangles`, `interpolate` | Tile-binned triangle rasterization with exact fixed-point coverage (Metal kernels) |
 | `mlx_arsenal.tiling` | `tiled_process`, `temporal_slice_process` | Memory-efficient large tensor processing |
 | `mlx_arsenal.streaming` | `BlockStreamer`, `BlockLoraSource`, `LoraFuser` | Low-RAM transformer block streaming from mmap'd safetensors |
 | `mlx_arsenal.modulation` | `AdaLNModulation`, `ScaleShiftTable`, `modulate`, `gated_residual` | DiT AdaLN modulation primitives (1 / 2 / 6 / 9-param variants) |
@@ -99,7 +99,7 @@ only handles the discovery + indexing.
 ## Requirements
 
 - Python >= 3.10
-- MLX >= 0.27.0
+- MLX >= 0.32.1
 - Apple Silicon Mac
 
 ## Development

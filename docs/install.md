@@ -3,7 +3,7 @@
 ## Requirements
 
 - Python ≥ 3.10
-- [MLX](https://github.com/ml-explore/mlx) ≥ 0.31.0
+- [MLX](https://github.com/ml-explore/mlx) ≥ 0.32.1
 - Apple Silicon Mac (M1 / M2 / M3 / M4)
 
 ## From PyPI
