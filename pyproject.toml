@@ -15,19 +15,21 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "mlx>=0.31.0",
+    # 0.32.1 floor: the rasterizer needs mx.searchsorted (added in 0.32), and
+    # 0.32.0 shipped without the bundled .pyi stubs (ml-explore/mlx#3916),
+    # breaking `ty check`; 0.32.1 restores them.
+    "mlx>=0.32.1",
     "numpy>=1.24",
 ]
 
 [project.optional-dependencies]
 dev = [
-    # mlx 0.32.0 shipped without the bundled .pyi stubs (mlx/core/*.pyi), so
-    # `ty check` cannot resolve mlx.core there (ml-explore/mlx#3916). 0.32.1
-    # restores all 8 stubs; floor the dev env above the one broken release.
-    "mlx>=0.32.1",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "ruff>=0.15.0",

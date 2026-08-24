@@ -15,7 +15,8 @@ place so each port doesn't ship a sixth copy.
 - **MLX-native semantics** — no `torch.compile`-shaped abstractions, no
   shadow autograd. Lazy `mx.eval` boundaries are respected.
 - **One missing-feature per module** — easy to compose, easy to ignore.
-- **Strict `ty` type-checking** — full type coverage, no `Any` leaks.
+- **Strict `ty` type-checking** — full type coverage (`Any` only at the
+  MLX interop boundary in `_typing`).
 
 ## Modules
 
@@ -27,9 +28,9 @@ place so each port doesn't ship a sixth copy.
 | [`attention`](api/attention.md) | `causal_mask`, `sliding_window_mask`, video-DiT masks (`spatial_only_mask`, `temporal_only_mask`, `sliding_tile_centered_mask`, `sliding_tile_block_mask`, `radial_box_mask`, `radial_gaussian_mask`, `frame_stride_diagonal_mask`, `vertical_stripe_mask`), head-pattern profiling (`Kind`, `classify`, `classify_heads_from_qk/probs`), token permutation (`block_contiguous_permutation`, `invert_permutation`) | Attention masks (LLM + sparse video DiT), head archetype classification, SVG2-style permutation |
 | [`norm`](api/norm.md) | `PixelNorm`, `ScaleNorm` | Custom normalization layers |
 | [`encoding`](api/encoding.md) | `FourierEmbedder` | Sinusoidal positional encoding |
-| [`diffusion`](api/diffusion.md) | `get_timestep_embedding`, `TimestepEmbedding`, `FlowMatchEulerDiscreteScheduler`, `DDIMScheduler`, `euler_step`, `classifier_free_guidance`, step-aware caches (`TeaCacheController`, `PerLayerAttentionCache`, `PerHeadAttentionCache`, `WindowResidualController`, `VerifiedFeatureCache`), CFG-skip (`CFGSkipController`, `CFGSimilarityProfiler`) | Flow-matching + DDIM diffusion primitives, cache-then-reuse and forecast-then-verify controllers, CFG acceleration |
+| [`diffusion`](api/diffusion.md) | `get_timestep_embedding`, `TimestepEmbedding`, `FlowMatchEulerDiscreteScheduler`, `DDIMScheduler`, `euler_step`, `classifier_free_guidance`, step-aware caches (`TeaCacheController`, `PerLayerAttentionCache`, `PerHeadAttentionCache`, `WindowResidualController`, `VerifiedFeatureCache`), CFG-skip (`CFGSkipController`, `CFGSimilarityProfiler`, `cfg_head_similarity`, `cfg_skip_mask`, `splice_heads`), sigma schedules (`get_sampling_sigmas`, `dynamic_shift_schedule`), `geometric_threshold` | Flow-matching + DDIM diffusion primitives, cache-then-reuse and forecast-then-verify controllers, CFG acceleration |
 | [`moe`](api/moe.md) | `MoEGate`, `MoELayer` | Top-k mixture-of-experts dispatch |
-| [`rasterize`](api/rasterize.md) | `rasterize_triangles`, `interpolate` | Differentiable triangle rasterization |
+| [`rasterize`](api/rasterize.md) | `rasterize_triangles`, `interpolate` | Tile-binned triangle rasterization, exact fixed-point coverage |
 | [`tiling`](api/tiling.md) | `tiled_process`, `temporal_slice_process` | Memory-efficient large tensor processing |
 | [`streaming`](api/streaming.md) | `BlockStreamer`, `BlockLoraSource`, `LoraFuser` | Low-RAM transformer block streaming |
 | [`modulation`](api/modulation.md) | `AdaLNModulation`, `ScaleShiftTable`, `modulate`, `gated_residual` | DiT AdaLN modulation primitives |

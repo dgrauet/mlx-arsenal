@@ -1,18 +1,13 @@
 name: Release
 
-# Two triggers cover both manual and automated release flows:
-#   - `push: tags: v*` fires when a contributor pushes a tag manually
-#     (or when release-please's tag is re-pushed from a non-Actions source).
-#   - `release: published` fires when a GitHub Release is published, which
-#     is the path release-please takes when it merges its own PR.
+# Two triggers cover both release flows:
+#   - `push: tags: v*` fires when a tag is pushed manually.
+#   - `release: published` fires when a GitHub Release is published — the
+#     path release-please takes when it merges its own PR.
 #
-# In practice today, neither event dispatches when release-please runs
-# under the default GITHUB_TOKEN (GitHub suppresses Action-created events
-# to prevent recursive workflows). The long-term fix is a PAT on the
-# release-please action; until then, contributors re-push the tag from
-# their CLI to trigger this workflow. The `release: published` line is
-# defensive — it activates automatically the day release-please switches
-# to a PAT.
+# release-please runs under a GitHub App token (see release-please.yml),
+# so its tags and releases dispatch this workflow normally; both triggers
+# are live and the job resolves the tag name from whichever event fired.
 on:
   push:
     tags:
@@ -25,9 +20,9 @@ jobs:
     name: Build distributions
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.11"
 
@@ -58,7 +53,7 @@ jobs:
           python -m pip install --upgrade pip build
           python -m build
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: dist
           path: dist/
@@ -73,12 +68,12 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: dist
           path: dist/
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # release/v1 (v1.13.0 line)
         with:
           # Both triggers (tag push + release published) fire since the
           # release GitHub App was wired in; the loser of the publish race
@@ -92,11 +87,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: dist
           path: dist/
