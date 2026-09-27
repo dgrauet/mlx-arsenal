@@ -1,6 +1,8 @@
 """Tests for mlx_arsenal.attention.compensation."""
 
+import gc
 import math
+from collections.abc import Callable
 
 import mlx.core as mx
 import numpy as np
@@ -238,6 +240,42 @@ class TestCentroidCompensatedAttention:
         )
         ref = _replacement_oracle(q, k, v, labels, labels, bm, 1.0 / math.sqrt(8))
         np.testing.assert_allclose(np.array(out), ref, atol=1e-5)
+
+    def test_shared_labels_do_not_materialize_per_head_masks(self):
+        # 1-D labels + rank-2 block mask: the (Sq, Sk + Ck) mask is identical for
+        # every head and must be built once. Reference: plain SDPA over the same
+        # number of keys with one shared mask, which bounds what dense attention
+        # itself allocates per head.
+        S, D, C, H = 1024, 16, 16, 8
+        labels = _balanced_labels(S, C, 60)
+        bm = _random_block_mask((C, C), 61)
+        mx.random.seed(62)
+        q, k, v = (mx.random.normal((1, H, S, D)) for _ in range(3))
+        k_ref, v_ref = (mx.random.normal((1, H, S + C, D)) for _ in range(2))
+        shared = mx.zeros((1, 1, S, S + C))
+        mx.eval(q, k, v, k_ref, v_ref, shared)
+
+        def extra_peak(fn: Callable[[], mx.array]) -> int:
+            # Peak allocated on top of what is live before the call.
+            gc.collect()
+            mx.clear_cache()
+            base = mx.get_active_memory()
+            mx.reset_peak_memory()
+            mx.eval(fn())
+            return mx.get_peak_memory() - base
+
+        peak = extra_peak(
+            lambda: centroid_compensated_attention(
+                q, k, v, q_labels=labels, k_labels=labels, block_mask=bm
+            )
+        )
+        ref_peak = extra_peak(
+            lambda: mx.fast.scaled_dot_product_attention(q, k_ref, v_ref, scale=0.25, mask=shared)
+        )
+
+        # A few single-head (Sq, Sk + Ck) temporaries are expected; one per head is not.
+        one_mask_bytes = S * (S + C) * 4
+        assert peak - ref_peak < 4 * one_mask_bytes
 
     def test_validation(self):
         q, k, v = self._qkv(50)

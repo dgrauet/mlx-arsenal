@@ -72,7 +72,10 @@ centroid columns (skipped / kept block).
 
 MLX has no block-sparse attention kernel, and ADR-0001 keeps writing one
 out of scope. Everything here runs dense — the compensated call costs
-slightly **more** than dense attention. These functions are quality tools:
+slightly **more** than dense attention. With `(S,)` labels and a
+`(Cq, Ck)` block mask, the `(Sq, Sk + Ck)` mask is built once and
+broadcast over batch and heads; per-head labels or masks build it per
+head, which at video sizes (S ≈ 32k, 40 heads) is out of reach. These functions are quality tools:
 measure what a sparse pattern costs in a port, with and without
 compensation, and serve as the numerical reference for a future kernel.
 

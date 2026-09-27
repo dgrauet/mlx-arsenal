@@ -69,7 +69,11 @@ def tile_labels(T: int, H: int, W: int, *, tile: tuple[int, int, int]) -> mx.arr
 
 
 def _cluster_labels(labels: mx.array, B: int, H: int, S: int, C: int, name: str) -> mx.array:
-    """Validate `(S,)` / `(B, H, S)` integer labels in `[0, C)`; return `(B, H, S)` int32."""
+    """Validate `(S,)` / `(B, H, S)` integer labels in `[0, C)`.
+
+    Returns int32 labels of shape `(1, 1, S)` or `(B, H, S)`: shared labels stay
+    shared so that masks built from them are not materialized per head.
+    """
     if not mx.issubdtype(labels.dtype, mx.integer):
         raise ValueError(f"{name} must have an integer dtype, got {labels.dtype}")
     if tuple(labels.shape) not in ((S,), (B, H, S)):
@@ -77,7 +81,8 @@ def _cluster_labels(labels: mx.array, B: int, H: int, S: int, C: int, name: str)
     lo, hi = item_int(mx.min(labels)), item_int(mx.max(labels))
     if lo < 0 or hi >= C:
         raise ValueError(f"{name} values must lie in [0, {C}), got range [{lo}, {hi}]")
-    return mx.broadcast_to(labels.astype(mx.int32), (B, H, S))
+    labels = labels.astype(mx.int32)
+    return labels if labels.ndim == 3 else labels.reshape(1, 1, S)
 
 
 def centroid_compensated_attention(
@@ -103,9 +108,10 @@ def centroid_compensated_attention(
     collapses to one extra key per cluster carrying a `log n_c` bias
     (`n_c` = cluster size). The implementation therefore runs one
     `mx.fast.scaled_dot_product_attention` over `[K; K̄]` / `[V; V̄]` with an
-    additive `(Sq, Sk + Ck)` mask. It is dense — O(Sq·(Sk+Ck)) mask memory,
-    no speedup — and meant as a quality tool and a reference for a future
-    block-sparse kernel.
+    additive `(Sq, Sk + Ck)` mask. It is dense — no speedup — and meant as a
+    quality tool and a reference for a future block-sparse kernel. The mask
+    is built once when labels are `(S,)` and `block_mask` has no per-batch or
+    per-head dims; per-head labels or masks materialize it `B·H` times.
 
     With `block_mask` all `0` this is exact dense attention; with it all
     `-inf`, attention over the cluster centroids only.
@@ -148,27 +154,34 @@ def centroid_compensated_attention(
     kept = mx.equal(bm, 0.0)
     if not mx.all(mx.logical_or(kept, mx.isneginf(bm))).item():
         raise ValueError("block_mask entries must be 0 or -inf")
-    try:
-        keep = mx.broadcast_to(kept, (B, H, Cq, Ck))
-    except ValueError as e:
+    lead = tuple(block_mask.shape[:-2])
+    lead = (1,) * (2 - len(lead)) + lead
+    if len(lead) != 2 or lead[0] not in (1, B) or lead[1] not in (1, H):
         raise ValueError(
             f"block_mask shape {tuple(block_mask.shape)} does not broadcast to {(B, H, Cq, Ck)}"
-        ) from e
+        )
+    # Smallest (batch, head) extent the mask actually varies over.
+    Lb = max(lead[0], ql.shape[0], kl.shape[0])
+    Lh = max(lead[1], ql.shape[1], kl.shape[1])
+    keep = mx.broadcast_to(kept.reshape(*lead, Cq, Ck), (Lb, Lh, Cq, Ck))
 
-    onehot = mx.equal(mx.expand_dims(kl, -1), mx.arange(Ck)).astype(mx.float32)  # (B, H, Sk, Ck)
-    counts = onehot.sum(axis=-2)  # (B, H, Ck)
+    onehot = mx.equal(mx.expand_dims(kl, -1), mx.arange(Ck)).astype(mx.float32)  # (., ., Sk, Ck)
+    counts = onehot.sum(axis=-2)  # (., ., Ck)
     inv_counts = mx.expand_dims(1.0 / mx.maximum(counts, 1.0), -1)
     onehot_t = onehot.swapaxes(-1, -2)
-    k_bar = (onehot_t @ k.astype(mx.float32)) * inv_counts
+    k_bar = (onehot_t @ k.astype(mx.float32)) * inv_counts  # (B, H, Ck, D)
     v_bar = (onehot_t @ v.astype(mx.float32)) * inv_counts
 
-    keep_rows = mx.take_along_axis(keep, mx.expand_dims(ql, -1), axis=-2)  # (B, H, Sq, Ck)
-    keep_tok = mx.take_along_axis(keep_rows, mx.expand_dims(kl, -2), axis=-1)  # (B, H, Sq, Sk)
-    neg_inf = mx.array(float("-inf"), dtype=mx.float32)
-    tok_mask = mx.where(keep_tok, 0.0, neg_inf)
-    log_n = mx.expand_dims(mx.log(counts), -2)  # -inf for empty clusters
+    ql_b = mx.broadcast_to(ql, (Lb, Lh, Sq))
+    kl_b = mx.broadcast_to(kl, (Lb, Lh, Sk))
+    keep_rows = mx.take_along_axis(keep, mx.expand_dims(ql_b, -1), axis=-2)  # (Lb, Lh, Sq, Ck)
+    keep_tok = mx.take_along_axis(keep_rows, mx.expand_dims(kl_b, -2), axis=-1)  # (Lb, Lh, Sq, Sk)
+    zero = mx.array(0.0, dtype=q.dtype)
+    neg_inf = mx.array(float("-inf"), dtype=q.dtype)
+    tok_mask = mx.where(keep_tok, zero, neg_inf)
+    log_n = mx.expand_dims(mx.log(counts), -2).astype(q.dtype)  # -inf for empty clusters
     cent_mask = mx.where(keep_rows, neg_inf, log_n)
-    mask = mx.concatenate([tok_mask, cent_mask], axis=-1).astype(q.dtype)
+    mask = mx.concatenate([tok_mask, cent_mask], axis=-1)
 
     k_ext = mx.concatenate([k, k_bar.astype(k.dtype)], axis=2)
     v_ext = mx.concatenate([v, v_bar.astype(v.dtype)], axis=2)
