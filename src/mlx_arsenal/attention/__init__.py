@@ -1,3 +1,4 @@
+from mlx_arsenal.attention.compensation import tile_labels
 from mlx_arsenal.attention.masks import causal_mask, sliding_window_mask
 from mlx_arsenal.attention.permute import (
     block_contiguous_permutation,
@@ -36,5 +37,6 @@ __all__ = [
     "sliding_window_mask",
     "spatial_only_mask",
     "temporal_only_mask",
+    "tile_labels",
     "vertical_stripe_mask",
 ]
