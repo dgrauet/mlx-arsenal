@@ -34,7 +34,7 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.15.0",
     "pre-commit>=3.5",
-    "ty==0.0.73",
+    "ty==0.0.74",
 ]
 docs = [
     "mkdocs-material>=9.5",
