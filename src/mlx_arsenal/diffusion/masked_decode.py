@@ -268,3 +268,68 @@ def entropy_bound_transfer(entropy: mx.array, candidates: mx.array, bound: float
     sorted_ent = mx.take_along_axis(filled, mx.argsort(rank, axis=-1), axis=-1)
     before = mx.cumsum(sorted_ent, axis=-1) - sorted_ent
     return _sorted_prefix(entropy, candidates, before <= bound, descending=False)
+
+
+def transfer_schedule(num_masked: mx.array, steps: int) -> mx.array:
+    """Per-step commit quota spreading each row's masked count over `steps`.
+
+    Row `b` commits `n_b // steps` tokens per step, plus one on its first
+    `n_b % steps` steps, so the quotas sum to `n_b`. This is LLaDA /
+    Fast-dLLM's `get_num_transfer_tokens` (the linear-schedule expectation),
+    computed per row. Use with :func:`topk_transfer`:
+    `topk_transfer(conf, candidates, schedule[:, step])`.
+
+    Args:
+        num_masked: `(B,)` non-negative integer count of masked positions per
+            row (typically in the current block).
+        steps: Number of denoising steps, `>= 1`.
+
+    Returns:
+        `(B, steps)` int32 quotas.
+    """
+    if num_masked.ndim != 1:
+        raise ValueError(f"num_masked must be 1D, got shape {tuple(num_masked.shape)}")
+    if not mx.issubdtype(num_masked.dtype, mx.integer):
+        raise ValueError(f"num_masked must have an integer dtype, got {num_masked.dtype}")
+    if steps < 1:
+        raise ValueError(f"steps must be >= 1, got {steps}")
+    if num_masked.size and item_int(mx.min(num_masked)) < 0:
+        raise ValueError("num_masked must be non-negative")
+    n = mx.expand_dims(num_masked.astype(mx.int32), -1)
+    base = mx.floor_divide(n, steps)
+    extra = mx.arange(steps) < (n - base * steps)
+    return (base + extra.astype(mx.int32)).astype(mx.int32)
+
+
+def block_ranges(
+    prompt_len: int, gen_len: int, block_len: int, *, align: bool = False
+) -> list[tuple[int, int]]:
+    """Half-open `(start, end)` blocks covering the generation span.
+
+    The span is `[prompt_len, prompt_len + gen_len)`. With `align=False`
+    blocks start at `prompt_len` (LLaDA 1.x, Dream, Fast-dLLM). With
+    `align=True` block boundaries sit on absolute multiples of `block_len`,
+    so the first block may be partial (dInfer `start_block_align`); use this
+    for block-causal models, whose blocks match
+    :func:`~mlx_arsenal.attention.block_causal_mask`. The last block is
+    truncated when the span is not a multiple of `block_len`.
+
+    Args:
+        prompt_len: Prompt length, `>= 0`.
+        gen_len: Number of tokens to generate, `>= 1`.
+        block_len: Block size, `>= 1`.
+        align: Align block boundaries on absolute positions.
+
+    Returns:
+        List of `(start, end)` index pairs, in order.
+    """
+    if prompt_len < 0:
+        raise ValueError(f"prompt_len must be >= 0, got {prompt_len}")
+    if gen_len < 1:
+        raise ValueError(f"gen_len must be >= 1, got {gen_len}")
+    if block_len < 1:
+        raise ValueError(f"block_len must be >= 1, got {block_len}")
+    end = prompt_len + gen_len
+    first = (prompt_len // block_len + 1) * block_len if align else prompt_len + block_len
+    bounds = [prompt_len, *range(first, end, block_len), end]
+    return [(a, b) for a, b in zip(bounds[:-1], bounds[1:])]

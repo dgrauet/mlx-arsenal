@@ -10,11 +10,13 @@ from .cfg_skip import (
 from .ddim import DDIMScheduler
 from .masked_decode import (
     TokenStats,
+    block_ranges,
     entropy_bound_transfer,
     factor_transfer,
     threshold_transfer,
     token_stats,
     topk_transfer,
+    transfer_schedule,
 )
 from .samplers import classifier_free_guidance, euler_step
 from .schedulers import (
@@ -28,6 +30,8 @@ from .verified_cache import VerifiedFeatureCache, geometric_threshold
 from .window_residual import WindowResidualController
 
 __all__ = [
+    "block_ranges",
+    "transfer_schedule",
     "entropy_bound_transfer",
     "factor_transfer",
     "TokenStats",

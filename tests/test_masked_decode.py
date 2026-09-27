@@ -8,11 +8,13 @@ import pytest
 
 from mlx_arsenal._typing import array_from_any, item_float
 from mlx_arsenal.diffusion import (
+    block_ranges,
     entropy_bound_transfer,
     factor_transfer,
     threshold_transfer,
     token_stats,
     topk_transfer,
+    transfer_schedule,
 )
 
 
@@ -335,3 +337,57 @@ class TestEntropyBoundTransfer:
             entropy_bound_transfer(ent, cand, -0.1)
         with pytest.raises(ValueError, match="bool"):
             entropy_bound_transfer(ent, cand.astype(mx.float32), 0.1)
+
+
+class TestTransferSchedule:
+    def test_matches_fastdllm(self):
+        num = np.array([0, 1, 7, 32, 33])
+        steps = 8
+        base, rem = num // steps, num % steps
+        ref = base[:, None] + (np.arange(steps)[None, :] < rem[:, None])
+        out = transfer_schedule(array_from_any(num.astype(np.int32)), steps)
+        assert out.dtype == mx.int32
+        assert np.array(out).tolist() == ref.tolist()
+        assert np.array(mx.sum(out, axis=1)).tolist() == num.tolist()
+
+    def test_validation(self):
+        with pytest.raises(ValueError, match="steps"):
+            transfer_schedule(mx.array([4]), 0)
+        with pytest.raises(ValueError, match="1D"):
+            transfer_schedule(mx.array([[4]]), 2)
+        with pytest.raises(ValueError, match="integer"):
+            transfer_schedule(mx.array([4.0]), 2)
+        with pytest.raises(ValueError, match="non-negative"):
+            transfer_schedule(mx.array([-1]), 2)
+
+
+class TestBlockRanges:
+    @pytest.mark.parametrize(
+        ("args", "expected"),
+        [
+            ((10, 8, 4), [(10, 14), (14, 18)]),
+            ((10, 10, 4), [(10, 14), (14, 18), (18, 20)]),
+            ((0, 5, 8), [(0, 5)]),
+        ],
+    )
+    def test_prompt_relative(self, args, expected):
+        assert block_ranges(*args) == expected
+
+    def test_aligned_to_absolute_blocks(self):
+        assert block_ranges(10, 8, 4, align=True) == [(10, 12), (12, 16), (16, 18)]
+
+    def test_aligned_prompt_on_boundary(self):
+        assert block_ranges(8, 8, 4, align=True) == [(8, 12), (12, 16)]
+
+    def test_aligned_matches_block_causal_mask(self):
+        # every aligned range stays inside one block of block_causal_mask.
+        for start, end in block_ranges(5, 20, 4, align=True):
+            assert (start // 4) == ((end - 1) // 4)
+
+    def test_validation(self):
+        with pytest.raises(ValueError, match="prompt_len"):
+            block_ranges(-1, 4, 2)
+        with pytest.raises(ValueError, match="gen_len"):
+            block_ranges(0, 0, 2)
+        with pytest.raises(ValueError, match="block_len"):
+            block_ranges(0, 4, 0)
