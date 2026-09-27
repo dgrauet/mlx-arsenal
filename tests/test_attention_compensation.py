@@ -340,6 +340,21 @@ class TestSelectProbeRows:
         assert idx.tolist() == [1, 3]
         assert w.tolist() == [3.0, 2.0]
 
+    def test_partial_pass_spreads_over_clusters(self):
+        # 10 clusters of 4 rows, 3 probes: take clusters 0, 3, 6 (evenly spread),
+        # not 0, 1, 2 — with T-major tile labels the low labels are the first frames.
+        labels = mx.array([i // 4 for i in range(40)], dtype=mx.int32)
+        idx, w = select_probe_rows(labels, 3)
+        assert idx.tolist() == [1, 13, 25]
+        assert w.tolist() == [4.0, 4.0, 4.0]
+
+    def test_probes_cover_all_frames_of_a_long_clip(self):
+        T, H, W, tile = 20, 12, 16, (4, 6, 4)  # 5 temporal tiles, 40 clusters
+        labels = tile_labels(T, H, W, tile=tile)
+        idx, _ = select_probe_rows(labels, 10)
+        frames = {i // (H * W) // tile[0] for i in np.array(idx).tolist()}
+        assert frames == set(range(T // tile[0]))
+
     def test_clusters_taken_in_label_order(self):
         idx, _ = select_probe_rows(mx.array([2, 0, 2, 0], dtype=mx.int32), 2)
         assert idx.tolist() == [1, 0]

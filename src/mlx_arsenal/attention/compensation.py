@@ -207,7 +207,9 @@ def select_probe_rows(q_labels: mx.array, num_probes: int) -> tuple[mx.array, mx
     Round-robin over the non-empty clusters in increasing label order: pass
     `r` takes, from every cluster that still has unused members, its member
     at middle-out rank `r` (positions sorted, middle first, then alternating
-    outward), until `num_probes` rows are taken.
+    outward), until `num_probes` rows are taken. When the last pass cannot
+    serve every cluster, it takes clusters evenly spaced over the label
+    range, so fewer probes than clusters still span the whole sequence.
 
     Deviation from SparsePR, which takes the row nearest to each query-group
     centroid: that needs `q` and per-head groups. This selection depends only
@@ -244,11 +246,13 @@ def select_probe_rows(q_labels: mx.array, num_probes: int) -> tuple[mx.array, mx
     picks: list[tuple[int, int]] = []
     rank = 0
     while len(picks) < num_probes:
-        for g in groups:
-            if rank < len(orders[g]):
-                picks.append((orders[g][rank], g))
-                if len(picks) == num_probes:
-                    break
+        eligible = [g for g in groups if rank < len(orders[g])]
+        remaining = num_probes - len(picks)
+        if remaining < len(eligible):
+            # Partial pass: spread evenly over the label range instead of taking
+            # the lowest labels (T-major tile labels would all be early frames).
+            eligible = [eligible[i * len(eligible) // remaining] for i in range(remaining)]
+        picks.extend((orders[g][rank], g) for g in eligible)
         rank += 1
 
     taken = Counter(g for _, g in picks)
