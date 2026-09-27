@@ -130,7 +130,18 @@ def centroid_compensated_attention(
         scale: Logit scale. Defaults to `1 / sqrt(D)`.
 
     Returns:
-        `(B, H, Sq, Dv)` attention output in `q.dtype`.
+        `(B, H, Sq, Dv)` attention output, in the dtype
+        `mx.fast.scaled_dot_product_attention` returns for `q, k, v`: `q.dtype`
+        when they share it, their promoted type otherwise (e.g. bfloat16 `q`
+        with float16 `k, v` gives float32).
+
+    Note:
+        The mask is built in `q.dtype` (SDPA rejects a mask wider than its
+        output). In bfloat16 the `log n_c` bias is therefore rounded to half
+        a bfloat16 ulp: at most 1/64 in logit units for `55 ≤ n_c < 2981`
+        (`4 ≤ log n_c < 8`), i.e. up to ~1.6% on that centroid's weight — the
+        same order as the rounding of the bfloat16 `q·k` logits themselves.
+        Pass float32 inputs when this tool is used as a numerical reference.
     """
     if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
         raise ValueError(f"q, k, v must have rank 4, got {q.ndim}, {k.ndim}, {v.ndim}")
@@ -144,6 +155,8 @@ def centroid_compensated_attention(
         raise ValueError(f"k and v key length differ: {Sk} vs {v.shape[2]}")
     if k.shape[3] != D:
         raise ValueError(f"q and k head dim differ: {D} vs {k.shape[3]}")
+    if Sq == 0 or Sk == 0:
+        raise ValueError(f"query and key sequences must be non-empty, got Sq={Sq}, Sk={Sk}")
     if block_mask.ndim < 2:
         raise ValueError(f"block_mask must have rank >= 2, got shape {tuple(block_mask.shape)}")
     Cq, Ck = block_mask.shape[-2:]
@@ -224,7 +237,10 @@ def select_probe_rows(q_labels: mx.array, num_probes: int) -> tuple[mx.array, mx
         `(probe_idx, weights)`, both `(num_probes,)`: int32 row indices and
         float32 weights `|G_a| / m_a` (cluster size over probes taken from
         that cluster). When every cluster gets at least one probe, the
-        weights sum to `Sq`.
+        weights sum to `Sq`. When `num_probes` is below the number of
+        clusters, only the sampled clusters are weighted: the weights sum to
+        the total size of those clusters, and unsampled clusters have no
+        say in the fit.
     """
     if q_labels.ndim != 1:
         raise ValueError(f"q_labels must be 1D, got shape {tuple(q_labels.shape)}")
