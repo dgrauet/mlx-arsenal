@@ -25,6 +25,8 @@ from typing import NamedTuple
 
 import mlx.core as mx
 
+from .._typing import item_int
+
 
 class TokenStats(NamedTuple):
     """Per-position statistics of dLLM logits, as returned by :func:`token_stats`."""
@@ -96,3 +98,97 @@ def token_stats(
     prob = mx.take_along_axis(p, mx.expand_dims(x0, -1), axis=-1).squeeze(-1)
     entropy = -mx.sum(mx.where(p > 0, p * logp, 0.0), axis=-1)
     return TokenStats(x0=x0, prob=prob, entropy=entropy)
+
+
+def _check_rule_inputs(scores: mx.array, candidates: mx.array, name: str) -> None:
+    if scores.ndim != 2:
+        raise ValueError(f"{name} must have rank 2 (B, L), got shape {tuple(scores.shape)}")
+    if candidates.dtype != mx.bool_:
+        raise ValueError(f"candidates must have bool dtype, got {candidates.dtype}")
+    if tuple(candidates.shape) != tuple(scores.shape):
+        raise ValueError(
+            f"candidates shape {tuple(candidates.shape)} != {name} shape {tuple(scores.shape)}"
+        )
+
+
+def _rank(scores: mx.array, candidates: mx.array, *, descending: bool) -> mx.array:
+    """Per-row rank of each candidate by score (0 = first); non-candidates rank last.
+
+    Sorting is stable, so equal scores rank by position (lower first).
+    """
+    key = scores.astype(mx.float32)
+    if descending:
+        key = -key
+    key = mx.where(candidates, key, float("inf"))
+    order = mx.argsort(key, axis=-1)
+    return mx.argsort(order, axis=-1)
+
+
+def threshold_transfer(
+    confidence: mx.array,
+    candidates: mx.array,
+    threshold: float,
+    *,
+    force_one: bool = True,
+) -> mx.array:
+    """Commit every candidate whose confidence reaches `threshold`.
+
+    With `force_one`, a row that has candidates but none above the threshold
+    commits exactly its most confident candidate (first position on ties),
+    so decoding always progresses. This is Fast-dLLM's `get_transfer_index`
+    with `threshold` (and SGLang's LowConfidence); dInfer instead lowers the
+    threshold to `max - 1e-5`, which can commit several near-tied tokens.
+
+    Args:
+        confidence: `(B, L)` score, higher commits first (e.g.
+            :attr:`TokenStats.prob`).
+        candidates: `(B, L)` bool, positions that may be committed (masked,
+            and inside the current block).
+        threshold: Minimum confidence, in `[0, 1]`.
+        force_one: Guarantee one commit per non-empty row.
+
+    Returns:
+        `(B, L)` bool, a subset of `candidates`.
+    """
+    _check_rule_inputs(confidence, candidates, "confidence")
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError(f"threshold must be in [0, 1], got {threshold}")
+    selected = mx.logical_and(candidates, confidence.astype(mx.float32) >= threshold)
+    if not force_one:
+        return selected
+    top1 = mx.logical_and(candidates, _rank(confidence, candidates, descending=True) == 0)
+    empty = mx.logical_not(mx.any(selected, axis=-1, keepdims=True))
+    return mx.logical_or(selected, mx.logical_and(empty, top1))
+
+
+def topk_transfer(confidence: mx.array, candidates: mx.array, k: int | mx.array) -> mx.array:
+    """Commit the `k` most confident candidates of each row.
+
+    Pair with :func:`transfer_schedule` for LLaDA-style fixed quotas
+    (`k = schedule[:, step]`). Each row uses its own `k`; a `k` above the
+    row's candidate count commits all of them.
+
+    Args:
+        confidence: `(B, L)` score, higher commits first.
+        candidates: `(B, L)` bool, positions that may be committed.
+        k: Non-negative int, or `(B,)` integer array of per-row counts.
+
+    Returns:
+        `(B, L)` bool, a subset of `candidates`.
+    """
+    _check_rule_inputs(confidence, candidates, "confidence")
+    B = confidence.shape[0]
+    if isinstance(k, mx.array):
+        if not mx.issubdtype(k.dtype, mx.integer) or tuple(k.shape) != (B,):
+            raise ValueError(
+                f"k must be an int or a ({B},) integer array, got {k.dtype} {tuple(k.shape)}"
+            )
+        if item_int(mx.min(k)) < 0:
+            raise ValueError("k must be non-negative")
+        kk = mx.expand_dims(k.astype(mx.int32), -1)
+    else:
+        if k < 0:
+            raise ValueError(f"k must be non-negative, got {k}")
+        kk = mx.array(k, dtype=mx.int32)
+    rank = _rank(confidence, candidates, descending=True)
+    return mx.logical_and(candidates, rank < kk)

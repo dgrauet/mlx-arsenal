@@ -8,7 +8,7 @@ from .cfg_skip import (
     cfg_skip_mask,
 )
 from .ddim import DDIMScheduler
-from .masked_decode import TokenStats, token_stats
+from .masked_decode import TokenStats, threshold_transfer, token_stats, topk_transfer
 from .samplers import classifier_free_guidance, euler_step
 from .schedulers import (
     FlowMatchEulerDiscreteScheduler,
@@ -22,7 +22,9 @@ from .window_residual import WindowResidualController
 
 __all__ = [
     "TokenStats",
+    "threshold_transfer",
     "token_stats",
+    "topk_transfer",
     "CFGSimilarityProfiler",
     "CFGSkipController",
     "DDIMScheduler",

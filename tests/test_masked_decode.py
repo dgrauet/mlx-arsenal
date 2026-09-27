@@ -7,13 +7,40 @@ import numpy as np
 import pytest
 
 from mlx_arsenal._typing import array_from_any, item_float
-from mlx_arsenal.diffusion import token_stats
+from mlx_arsenal.diffusion import threshold_transfer, token_stats, topk_transfer
 
 
 def _np_softmax(logits: np.ndarray) -> np.ndarray:
     z = logits - logits.max(axis=-1, keepdims=True)
     e = np.exp(z)
     return e / e.sum(axis=-1, keepdims=True)
+
+
+def _fastdllm_transfer(
+    conf: np.ndarray, mask: np.ndarray, k: np.ndarray | None, threshold: float | None
+) -> np.ndarray:
+    """Transcription of Fast-dLLM v1 `get_transfer_index` selection (float64)."""
+    confidence = np.where(mask, conf.astype(np.float64), -np.inf)
+    num = mask.sum(axis=1) if threshold is not None else k
+    assert num is not None
+    out = np.zeros_like(mask)
+    for j in range(conf.shape[0]):
+        if num[j] == 0:
+            continue
+        select = np.argsort(-confidence[j], kind="stable")[: num[j]]
+        out[j, select] = True
+        if threshold is not None:
+            for idx in select[1:]:
+                if confidence[j, idx] < threshold:
+                    out[j, idx] = False
+    return out
+
+
+def _random_case(B: int, L: int, seed: int, p_mask: float = 0.6):
+    rng = np.random.default_rng(seed)
+    conf = rng.random((B, L)).astype(np.float32)
+    mask = rng.random((B, L)) < p_mask
+    return conf, mask
 
 
 def _random_logits(shape: tuple[int, ...], seed: int, scale: float = 3.0) -> np.ndarray:
@@ -108,3 +135,82 @@ class TestTokenStats:
             token_stats(logits, suppress_ids=[-1])
         with pytest.raises(ValueError, match="suppress_ids"):
             token_stats(logits, suppress_ids=range(5))
+
+
+class TestThresholdTransfer:
+    @pytest.mark.parametrize("threshold", [0.0, 0.3, 0.7, 0.95, 1.0])
+    def test_matches_fastdllm(self, threshold):
+        conf, mask = _random_case(6, 32, 10)
+        mask[0] = False  # an empty row
+        out = threshold_transfer(array_from_any(conf), array_from_any(mask), threshold)
+        ref = _fastdllm_transfer(conf, mask, None, threshold)
+        assert np.array(out).tolist() == ref.tolist()
+
+    def test_force_one_off_keeps_empty_selection(self):
+        conf = mx.array([[0.1, 0.2, 0.3]])
+        cand = mx.array([[True, True, True]])
+        assert not mx.any(threshold_transfer(conf, cand, 0.9, force_one=False)).item()
+        assert threshold_transfer(conf, cand, 0.9).tolist() == [[False, False, True]]
+
+    def test_forces_exactly_one_on_ties(self):
+        conf = mx.array([[0.4, 0.4, 0.4, 0.1]])
+        cand = mx.array([[False, True, True, True]])
+        # tie between positions 1 and 2: the first candidate wins.
+        assert threshold_transfer(conf, cand, 0.9).tolist() == [[False, True, False, False]]
+
+    def test_rows_are_independent(self):
+        conf = mx.array([[0.9, 0.95, 0.1], [0.9, 0.95, 0.1]])
+        cand = mx.array([[False, False, False], [True, True, True]])
+        assert threshold_transfer(conf, cand, 0.5).tolist() == [
+            [False, False, False],
+            [True, True, False],
+        ]
+
+    def test_validation(self):
+        conf, cand = mx.zeros((2, 3)), mx.ones((2, 3), dtype=mx.bool_)
+        with pytest.raises(ValueError, match="threshold"):
+            threshold_transfer(conf, cand, 1.5)
+        with pytest.raises(ValueError, match="bool"):
+            threshold_transfer(conf, cand.astype(mx.int32), 0.5)
+        with pytest.raises(ValueError, match="shape"):
+            threshold_transfer(conf, cand[:, :2], 0.5)
+        with pytest.raises(ValueError, match="rank 2"):
+            threshold_transfer(conf[0], cand[0], 0.5)
+
+
+class TestTopkTransfer:
+    def test_matches_fastdllm_per_row_k(self):
+        conf, mask = _random_case(5, 24, 11)
+        k = np.minimum(np.array([0, 1, 3, 7, 24]), mask.sum(axis=1))
+        out = topk_transfer(array_from_any(conf), array_from_any(mask), array_from_any(k))
+        ref = _fastdllm_transfer(conf, mask, k, None)
+        assert np.array(out).tolist() == ref.tolist()
+
+    def test_scalar_k(self):
+        conf, mask = _random_case(3, 16, 12, p_mask=1.0)
+        out = topk_transfer(array_from_any(conf), array_from_any(mask), 4)
+        assert np.array(mx.sum(out, axis=1)).tolist() == [4, 4, 4]
+
+    def test_k_larger_than_candidates(self):
+        conf = mx.array([[0.5, 0.6, 0.7], [0.5, 0.6, 0.7]])
+        cand = mx.array([[True, False, True], [False, False, False]])
+        out = topk_transfer(conf, cand, mx.array([5, 2]))
+        assert out.tolist() == [[True, False, True], [False, False, False]]
+
+    def test_per_row_k_is_not_averaged(self):
+        # Dream averages the quota over the batch; each row must get its own k.
+        conf = mx.array([[0.1, 0.2, 0.3, 0.4]] * 2)
+        cand = mx.ones((2, 4), dtype=mx.bool_)
+        out = topk_transfer(conf, cand, mx.array([1, 3]))
+        assert np.array(mx.sum(out, axis=1)).tolist() == [1, 3]
+
+    def test_validation(self):
+        conf, cand = mx.zeros((2, 3)), mx.ones((2, 3), dtype=mx.bool_)
+        with pytest.raises(ValueError, match="k"):
+            topk_transfer(conf, cand, -1)
+        with pytest.raises(ValueError, match="k"):
+            topk_transfer(conf, cand, mx.array([1, 2, 3]))
+        with pytest.raises(ValueError, match="k"):
+            topk_transfer(conf, cand, mx.array([1, -2]))
+        with pytest.raises(ValueError, match="k"):
+            topk_transfer(conf, cand, mx.array([1.0, 2.0]))
