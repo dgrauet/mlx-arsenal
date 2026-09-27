@@ -1,5 +1,6 @@
 from mlx_arsenal.attention.compensation import (
     centroid_compensated_attention,
+    probe_residual_correction,
     select_probe_rows,
     tile_labels,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "classify_heads_from_qk",
     "frame_stride_diagonal_mask",
     "invert_permutation",
+    "probe_residual_correction",
     "radial_box_mask",
     "radial_gaussian_mask",
     "select_probe_rows",

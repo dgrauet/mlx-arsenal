@@ -24,9 +24,11 @@ from typing import cast
 
 import mlx.core as mx
 
-from mlx_arsenal._typing import item_int
+from mlx_arsenal._typing import item_float, item_int
 from mlx_arsenal.attention._thw import thw_coords as _thw_coords
 from mlx_arsenal.attention._thw import validate_thw as _validate_thw
+
+_STD_FLOOR = 1e-6
 
 
 def tile_labels(T: int, H: int, W: int, *, tile: tuple[int, int, int]) -> mx.array:
@@ -240,3 +242,110 @@ def select_probe_rows(q_labels: mx.array, num_probes: int) -> tuple[mx.array, mx
     idx = [pos for pos, _ in picks]
     weights = [len(members[g]) / taken[g] for _, g in picks]
     return mx.array(idx, dtype=mx.int32), mx.array(weights, dtype=mx.float32)
+
+
+def probe_residual_correction(
+    o_sparse: mx.array,
+    o_probe: mx.array,
+    probe_idx: mx.array,
+    *,
+    rank: int = 16,
+    ridge: float = 0.1,
+    weights: mx.array | None = None,
+) -> mx.array:
+    """Repair an approximate attention output from a few exact probe rows (SparsePR).
+
+    The residual `R = O_dense - O_sparse` is measured exactly on the probe
+    rows, then predicted on every row by a weighted ridge regression on the
+    standardized sparse output, projected onto the top-`rank` principal
+    directions of the probe residuals:
+
+    ```text
+    B  = (X̄ᵀ W X̄ + ridge·I)⁻¹ X̄ᵀ W R̄          X̄, R̄: standardized / centered probe rows
+    Ψ  = top-`rank` right singular vectors of W^½ R̄
+    R̂  = μ_R + ((O_sparse - μ_X) / σ_X) B Ψ Ψᵀ
+    out = O_sparse + R̂                          probe rows replaced by `o_probe`
+    ```
+
+    Works with any approximate attention (hard-dropped block-sparse, masked,
+    centroid-compensated). The correction is additive: rows are **not**
+    renormalized, so the output is no longer a convex softmax average. The
+    fit is stateless — SparsePR refits on every call — and runs per
+    (batch, head) in float32; the solve and SVD use the CPU stream (MLX has
+    no GPU kernels for them). Get the exact probe rows with one dense call:
+
+    ```python
+    o_probe = mx.fast.scaled_dot_product_attention(q[:, :, probe_idx], k, v, scale=scale)
+    ```
+
+    Deviations from the paper: weights are normalized to sum to 1 (so
+    `ridge` does not scale with the number of probes), and the optional
+    blend factor and norm cap of the reference code (off by default there)
+    are not exposed.
+
+    Args:
+        o_sparse: `(B, H, S, Dv)` approximate attention output.
+        o_probe: `(B, H, P, Dv)` exact attention output at rows `probe_idx`.
+        probe_idx: `(P,)` distinct integer row indices in `[0, S)`. See
+            :func:`select_probe_rows`.
+        rank: Rank of the residual projection, in `[1, min(P, Dv)]`.
+        ridge: Ridge strength, `> 0`.
+        weights: `(P,)` non-negative per-probe weights with a positive sum.
+            Defaults to uniform.
+
+    Returns:
+        `(B, H, S, Dv)` corrected output in `o_sparse.dtype`.
+    """
+    if o_sparse.ndim != 4:
+        raise ValueError(f"o_sparse must have rank 4, got shape {tuple(o_sparse.shape)}")
+    B, H, S, Dv = o_sparse.shape
+    if probe_idx.ndim != 1:
+        raise ValueError(f"probe_idx must be 1D, got shape {tuple(probe_idx.shape)}")
+    if not mx.issubdtype(probe_idx.dtype, mx.integer):
+        raise ValueError(f"probe_idx must have an integer dtype, got {probe_idx.dtype}")
+    P = probe_idx.shape[0]
+    if P == 0:
+        raise ValueError("probe_idx must be non-empty")
+    if tuple(o_probe.shape) != (B, H, P, Dv):
+        raise ValueError(f"o_probe must have shape {(B, H, P, Dv)}, got {tuple(o_probe.shape)}")
+    idx_list = cast(list[int], probe_idx.tolist())
+    if min(idx_list) < 0 or max(idx_list) >= S:
+        raise ValueError(f"probe_idx values must lie in [0, {S})")
+    if len(set(idx_list)) != P:
+        raise ValueError("probe_idx values must be distinct")
+    if not ridge > 0:
+        raise ValueError(f"ridge must be > 0, got {ridge}")
+    if not 1 <= rank <= min(P, Dv):
+        raise ValueError(f"rank must be in [1, min(P, Dv)] = [1, {min(P, Dv)}], got {rank}")
+    if weights is None:
+        w = mx.full((P,), 1.0 / P)
+    else:
+        if tuple(weights.shape) != (P,):
+            raise ValueError(f"weights must have shape ({P},), got {tuple(weights.shape)}")
+        w = weights.astype(mx.float32)
+        if item_float(mx.min(w)) < 0:
+            raise ValueError("weights must be non-negative")
+        total = item_float(mx.sum(w))
+        if not total > 0:
+            raise ValueError("weights must have a positive sum")
+        w = w / total
+
+    idx = probe_idx.astype(mx.int32)
+    xs = o_sparse.astype(mx.float32)
+    X = mx.take(xs, idx, axis=2)  # (B, H, P, Dv)
+    R = o_probe.astype(mx.float32) - X
+    wc = mx.expand_dims(w, -1)  # (P, 1)
+    mu_x = (wc * X).sum(axis=2, keepdims=True)
+    sx = mx.maximum(mx.sqrt((wc * mx.square(X - mu_x)).sum(axis=2, keepdims=True)), _STD_FLOOR)
+    mu_r = (wc * R).sum(axis=2, keepdims=True)
+    Xb = (X - mu_x) / sx
+    Rb = R - mu_r
+    XtW = (Xb * wc).swapaxes(-1, -2)  # (B, H, Dv, P)
+    gram = XtW @ Xb + ridge * mx.eye(Dv)
+    coef = mx.linalg.solve(gram, XtW @ Rb, stream=mx.cpu)  # (B, H, Dv, Dv)
+    _, _, vt = mx.linalg.svd(mx.sqrt(wc) * Rb, stream=mx.cpu)
+    psi = vt[..., :rank, :].swapaxes(-1, -2)  # (B, H, Dv, rank)
+    proj = coef @ psi @ psi.swapaxes(-1, -2)
+    out = xs + mu_r + ((xs - mu_x) / sx) @ proj
+    out[:, :, idx, :] = o_probe.astype(mx.float32)
+    return out.astype(o_sparse.dtype)

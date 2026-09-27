@@ -9,6 +9,7 @@ import pytest
 from mlx_arsenal._typing import array_from_any, item_float
 from mlx_arsenal.attention import (
     centroid_compensated_attention,
+    probe_residual_correction,
     select_probe_rows,
     sliding_tile_block_mask,
     tile_labels,
@@ -320,3 +321,93 @@ class TestSelectProbeRows:
             select_probe_rows(self.labels, 0)
         with pytest.raises(ValueError, match="num_probes"):
             select_probe_rows(self.labels, 7)
+
+
+class TestProbeResidualCorrection:
+    B, H, S, Dv = 1, 2, 64, 8
+
+    def _rows(self, seed: int) -> mx.array:
+        rng = np.random.default_rng(seed)
+        return array_from_any(rng.normal(size=(self.B, self.H, self.S, self.Dv)).astype(np.float32))
+
+    def test_exact_sparse_is_unchanged(self):
+        dense = self._rows(0)
+        idx = mx.arange(0, self.S, 4)
+        out = probe_residual_correction(dense, dense[:, :, idx], idx, rank=4)
+        assert mx.allclose(out, dense, atol=1e-5).item()
+
+    def test_probe_rows_are_exact(self):
+        o_sparse, o_probe_full = self._rows(1), self._rows(2)
+        idx = mx.array([3, 17, 40, 41, 60, 5, 22, 9, 33], dtype=mx.int32)
+        out = probe_residual_correction(o_sparse, o_probe_full[:, :, idx], idx, rank=4)
+        assert mx.array_equal(out[:, :, idx], o_probe_full[:, :, idx]).item()
+
+    def test_recovers_planted_low_rank_residual(self):
+        # dense = sparse + sparse @ A + c with rank(A) = 2: an affine residual the
+        # ridge + rank-2 projection must recover on every row, not just the probes.
+        rng = np.random.default_rng(3)
+        o_sparse = self._rows(4)
+        A = array_from_any(
+            (rng.normal(size=(self.Dv, 2)) @ rng.normal(size=(2, self.Dv))).astype(np.float32)
+        )
+        c = array_from_any(rng.normal(size=(self.Dv,)).astype(np.float32))
+        dense = o_sparse + o_sparse @ A + c
+        idx = mx.arange(0, self.S, 2)
+        out = probe_residual_correction(o_sparse, dense[:, :, idx], idx, rank=2, ridge=1e-6)
+        assert mx.allclose(out, dense, atol=1e-3).item()
+
+    def test_reduces_error_on_sta_drop(self):
+        T, H, W, D = 2, 8, 8, 16
+        S = T * H * W
+        labels = tile_labels(T, H, W, tile=(1, 4, 4))
+        bm = sliding_tile_block_mask(2, 2, 2, tile=(1, 1, 1), window=(0, 0, 0))[0, 0]
+        tok_mask = mx.take(mx.take(bm, labels, axis=0), labels, axis=1)
+        rng = np.random.default_rng(0)
+        q, k, v = (
+            array_from_any(rng.normal(size=(1, 2, S, D)).astype(np.float32)) for _ in range(3)
+        )
+        scale = 1.0 / math.sqrt(D)
+        dense = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale)
+        sparse = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=tok_mask)
+        idx, w = select_probe_rows(labels, 32)
+        o_probe = mx.fast.scaled_dot_product_attention(q[:, :, idx], k, v, scale=scale)
+        out = probe_residual_correction(sparse, o_probe, idx, rank=4, weights=w)
+        rest = array_from_any(np.setdiff1d(np.arange(S), np.array(idx)).astype(np.int32))
+        err_before = item_float(mx.linalg.norm(mx.take(sparse - dense, rest, axis=2)))
+        err_after = item_float(mx.linalg.norm(mx.take(out - dense, rest, axis=2)))
+        assert err_after < 0.9 * err_before
+
+    def test_preserves_dtype(self):
+        dense = self._rows(5).astype(mx.float16)
+        idx = mx.arange(0, self.S, 4)
+        out = probe_residual_correction(dense, dense[:, :, idx], idx, rank=4)
+        assert out.dtype == mx.float16
+
+    def test_validation(self):
+        o = self._rows(6)
+        idx = mx.arange(0, 16)
+        op = o[:, :, idx]
+        with pytest.raises(ValueError, match="rank 4"):
+            probe_residual_correction(o[0], op, idx)
+        with pytest.raises(ValueError, match="1D"):
+            probe_residual_correction(o, op, idx[None])
+        with pytest.raises(ValueError, match="integer"):
+            probe_residual_correction(o, op, idx.astype(mx.float32))
+        with pytest.raises(ValueError, match="o_probe"):
+            probe_residual_correction(o, op[:, :, :-1], idx)
+        with pytest.raises(ValueError, match=r"\[0, 64\)"):
+            probe_residual_correction(o, op, idx + 60)
+        with pytest.raises(ValueError, match="distinct"):
+            probe_residual_correction(o, op, mx.zeros((16,), dtype=mx.int32))
+        with pytest.raises(ValueError, match="ridge"):
+            probe_residual_correction(o, op, idx, ridge=0.0)
+        with pytest.raises(ValueError, match="rank"):
+            probe_residual_correction(o, op, idx, rank=0)
+        with pytest.raises(ValueError, match="rank"):
+            probe_residual_correction(o, op, idx, rank=self.Dv + 1)
+        with pytest.raises(ValueError, match="weights"):
+            probe_residual_correction(o, op, idx, rank=4, weights=mx.ones((15,)))
+        with pytest.raises(ValueError, match="weights"):
+            probe_residual_correction(o, op, idx, rank=4, weights=-mx.ones((16,)))
+        with pytest.raises(ValueError, match="weights"):
+            probe_residual_correction(o, op, idx, rank=4, weights=mx.zeros((16,)))
