@@ -1,5 +1,6 @@
 """Tests for mlx_arsenal.diffusion.masked_decode."""
 
+import gc
 import math
 import re
 from pathlib import Path
@@ -178,6 +179,25 @@ class TestTokenStats:
         a = token_stats(logits)
         b = token_stats(logits, key=mx.random.key(3))
         assert mx.array_equal(a.x0, b.x0).item()
+
+    @pytest.mark.parametrize(("temperature", "budget"), [(0.0, 2.25), (1.0, 3.25)])
+    def test_peak_memory_is_bounded(self, temperature, budget):
+        # At V ~ 262k one float32 (B, L, V) array is ~1 GiB per 1024 positions.
+        # Expected: the float32 logits copy + one fused entropy temporary
+        # (+ the uniform noise when sampling). The unfused version used ~4.3x
+        # and ~6.3x at this size.
+        B, L, V = 2, 64, 32768
+        logits = mx.random.normal((B, L, V), key=mx.random.key(0)).astype(mx.bfloat16)
+        mx.eval(logits)
+        key = mx.random.key(1) if temperature > 0 else None
+        mx.eval(token_stats(logits, temperature=temperature, key=key, suppress_ids=[0]))  # warm-up
+        gc.collect()
+        mx.clear_cache()
+        base = mx.get_active_memory()
+        mx.reset_peak_memory()
+        mx.eval(token_stats(logits, temperature=temperature, key=key, suppress_ids=[0]))
+        extra = mx.get_peak_memory() - base
+        assert extra < budget * B * L * V * 4
 
     def test_validation(self):
         logits = array_from_any(_random_logits((1, 3, 5), 7))

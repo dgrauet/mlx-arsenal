@@ -40,6 +40,19 @@ class TokenStats(NamedTuple):
     """`(B, L)` float32 entropy (nats) of the temperature-1 softmax."""
 
 
+@mx.compile
+def _gumbel_argmax(lg: mx.array, u: mx.array, inv_t: mx.array) -> mx.array:
+    # argmax(l / T + Gumbel) samples softmax(l / T); u == 0 gives -inf noise.
+    return mx.argmax(lg * inv_t - mx.log(-mx.log(u)), axis=-1)
+
+
+@mx.compile
+def _entropy(lg: mx.array, lse: mx.array) -> mx.array:
+    logp = lg - lse
+    p = mx.exp(logp)
+    return -mx.sum(mx.where(p > 0, p * logp, 0.0), axis=-1)
+
+
 def token_stats(
     logits: mx.array,
     *,
@@ -50,8 +63,8 @@ def token_stats(
     """Propose a token per position with its confidence and entropy.
 
     `x0` is the argmax of the logits when `temperature == 0`, otherwise a
-    sample of `softmax(logits / temperature)` (Gumbel-max, equivalent to the
-    Fast-dLLM / LLaDA `add_gumbel_noise` + argmax). `prob` — the usual
+    Gumbel-max sample of `softmax(logits / temperature)`, which is what the
+    Fast-dLLM / LLaDA `add_gumbel_noise` + argmax computes. `prob` — the usual
     "low_confidence" score — and `entropy` always use the **un-noised,
     temperature-1** softmax, as in the reference implementations.
 
@@ -83,21 +96,25 @@ def token_stats(
     if len(ids) >= V:
         raise ValueError("suppress_ids must leave at least one token")
 
+    # One float32 (B, L, V) copy of the logits; the sampling noise and the
+    # entropy terms are fused by mx.compile (at V ~ 262k, one such array is
+    # ~1 GiB per 1024 positions). prob is gathered, not a full softmax.
     lg = logits.astype(mx.float32)
     if ids:
-        suppressed = mx.any(mx.expand_dims(mx.arange(V), -1) == mx.array(ids), axis=-1)
-        lg = mx.where(suppressed, float("-inf"), lg)
+        bias = mx.zeros((V,), dtype=mx.float32)
+        bias[mx.array(ids)] = float("-inf")
+        lg = lg + bias
+    lse = mx.logsumexp(lg, axis=-1, keepdims=True)
 
     if temperature > 0:
-        x0 = mx.random.categorical(lg / temperature, axis=-1, key=key)
+        u = mx.random.uniform(shape=lg.shape, key=key)
+        x0 = _gumbel_argmax(lg, u, mx.array(1.0 / temperature, dtype=mx.float32))
     else:
         x0 = mx.argmax(lg, axis=-1)
     x0 = x0.astype(mx.int32)
 
-    logp = lg - mx.logsumexp(lg, axis=-1, keepdims=True)
-    p = mx.exp(logp)
-    prob = mx.take_along_axis(p, mx.expand_dims(x0, -1), axis=-1).squeeze(-1)
-    entropy = -mx.sum(mx.where(p > 0, p * logp, 0.0), axis=-1)
+    prob = mx.exp(mx.take_along_axis(lg, mx.expand_dims(x0, -1), axis=-1) - lse).squeeze(-1)
+    entropy = _entropy(lg, lse)
     return TokenStats(x0=x0, prob=prob, entropy=entropy)
 
 
