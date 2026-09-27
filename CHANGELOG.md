@@ -59,7 +59,7 @@ from Conventional Commits, and this project adheres to
 
 [Compare v0.8.0...v0.9.0](https://github.com/dgrauet/mlx-arsenal/compare/v0.8.0...v0.9.0)
 
-### Added — sparse-attention roadmap for video DiTs (étapes 1–6)
+### Added — sparse-attention roadmap for video DiTs (steps 1–6)
 
 - `mlx_arsenal.attention` video-DiT spatiotemporal masks
   (#27): `spatial_only_mask`, `temporal_only_mask`,
@@ -75,7 +75,7 @@ from Conventional Commits, and this project adheres to
   `classify_heads_from_probs`. Returns per-head fractions of attention
   mass on same-frame / same-position keys, then converts to discrete
   labels. The `from_qk` path samples queries to avoid materializing the
-  full `(S, S)` attention. Companion to the étape-1 masks for
+  full `(S, S)` attention. Companion to the step-1 masks for
   Sparse-VideoGen-style head selection.
 
 - `mlx_arsenal.diffusion` attention output cache (AST,

@@ -1,38 +1,38 @@
-# ADR-0000 : Adopt intendant
+# ADR-0000: Adopt intendant
 
-- **Statut** : accepted
-- **Date** : 2026-04-30
-- **Stacks concernées** : * (transverse)
+- **Status**: accepted
+- **Date**: 2026-04-30
+- **Stacks affected**: * (cross-cutting)
 
-## Contexte
+## Context
 
-Ce repo adopte [intendant](https://github.com/dgrauet/intendant) comme framework
-de gouvernance — handbook, audit (palier 2), scaffolder (palier 3). Le fichier
-`.intendant.toml` à la racine du repo déclare la stack, le mode de conformité
-appliqué, et les exemptions justifiées.
+This repo adopts [intendant](https://github.com/dgrauet/intendant) as its
+governance framework — handbook, audit (tier 2), scaffolder (tier 3). The
+`.intendant.toml` file at the repo root declares the stack, the
+enforcement mode applied, and the justified exemptions.
 
-## Décision
+## Decision
 
-- Stack détectée à l'adoption : `python`
-- Mode initial : `advisory` (les findings sont rapportés mais ne bloquent rien).
-- Toutes les ADRs futures du repo numérotées à partir de 0001.
+- Stack detected at adoption: `python`
+- Initial mode: `advisory` (findings are reported but block nothing).
+- All future ADRs in the repo are numbered from 0001.
 
-## Conséquences
+## Consequences
 
-- L'auditeur (palier 2 d'intendant) pourra rouler sur ce repo et rapporter
-  les écarts vs le baseline.
-- Les exemptions doivent être listées dans `.intendant.toml` avec une raison.
+- The auditor (intendant tier 2) can run on this repo and report
+  deviations from the baseline.
+- Exemptions must be listed in `.intendant.toml` with a reason.
 
-## Alternatives considérées
+## Alternatives considered
 
-- Ne rien adopter (garder les conventions implicites). Rejeté : la dette
-  conventionnelle s'accumule en silence.
-- Adopter un autre framework : aucun équivalent multi-stack identifié au
-  moment de l'adoption.
+- Adopt nothing (keep conventions implicit). Rejected: convention debt
+  piles up silently.
+- Adopt another framework: no multi-stack equivalent was identified at
+  adoption time.
 
-## Porte de sortie / révision
+## Exit / revision
 
-- Si intendant ne suit plus l'évolution des outils, basculer en `mode = advisory`
-  permanent et reprendre les standards à la main.
-- Si un baseline `v2` casse trop de règles : geler à `version = "1"` et planifier
-  une migration ciblée.
+- If intendant stops keeping up with the tooling, switch to a permanent
+  `mode = advisory` and take the standards back by hand.
+- If a `v2` baseline breaks too many rules: freeze at `version = "1"` and
+  plan a targeted migration.

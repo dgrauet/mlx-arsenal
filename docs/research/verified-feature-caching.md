@@ -1,121 +1,120 @@
 # Verified feature caching
 
-Notes de veille sur les techniques de cache à vérification pour modèles
-itératifs (diffusion image / vidéo / audio, dLLMs). Cette page documente
-le pattern et son applicabilité à `mlx-arsenal` — elle n'engage pas un
-ADR ni une roadmap.
+Research notes on verification-based caching techniques for iterative
+models (image / video / audio diffusion, dLLMs). This page documents the
+pattern and how it applies to `mlx-arsenal` — it does not commit to an
+ADR or a roadmap.
 
-## Le pattern : forecast-then-verify
+## The pattern: forecast-then-verify
 
-Deux familles coexistent dans la littérature 2024-2025 :
+Two families coexist in the 2024-2025 literature:
 
-### Cache-then-reuse (statu quo de `mlx-arsenal`)
+### Cache-then-reuse (the `mlx-arsenal` status quo)
 
-Une heuristique step-à-step (typiquement relative-L1 sur les inputs ou
-hidden states) décide si le step courant peut ré-utiliser le résultat du
-step précédent — puis applique la décision **sans vérifier la qualité
-réelle**.
+A step-to-step heuristic (typically relative-L1 on the inputs or hidden
+states) decides whether the current step can reuse the previous step's
+result — then applies the decision **without checking the actual
+quality**.
 
-Implémentations dans la lib : `TeaCacheController`,
+Implementations in the library: `TeaCacheController`,
 `PerLayerAttentionCache`, `PerHeadAttentionCache`,
-`WindowResidualController.adaptive`. Toutes utilisent relative-L1.
+`WindowResidualController.adaptive`. All of them use relative-L1.
 
-Limites connues : dérive silencieuse quand l'hypothèse de smoothness
-casse (transition de contenu, prompt inhabituel), plafond de speedup
-autour de 3-4× avant collapse qualité.
+Known limits: silent drift when the smoothness assumption breaks
+(content transition, unusual prompt), and a speedup ceiling around 3-4×
+before quality collapses.
 
 ### Forecast-then-verify
 
-Trois étapes :
+Three steps:
 
-1. **Draft** — extrapolation paramétrique-free des features
-   (typiquement expansion de Taylor sur l'axe itératif via différences
-   finies d'ancres précédentes). Coût quasi nul : algèbre linéaire sur
-   tenseurs déjà en mémoire.
-2. **Verify** — forward partiel sur **une seule couche** (≈1.7-3.5% du
-   coût d'un forward complet) pour mesurer l'erreur relative L2 entre
-   feature draftée et feature réelle :
+1. **Draft** — parameter-free extrapolation of the features (typically a
+   Taylor expansion along the iteration axis, using finite differences
+   of previous anchors). Near-zero cost: linear algebra on tensors
+   already in memory.
+2. **Verify** — a partial forward pass through **a single layer**
+   (≈1.7-3.5% of the cost of a full forward) to measure the relative L2
+   error between the drafted feature and the real one:
    ```
    e_k = ‖F_pred − F_real‖²₂ / (‖F_real‖²₂ + ε)
    ```
-3. **Accept/reject** — seuil adaptatif sur l'axe itératif
-   (`τ_t = τ₀ · β^((T-t)/T)` chez SpeCa).
+3. **Accept/reject** — an adaptive threshold along the iteration axis
+   (`τ_t = τ₀ · β^((T-t)/T)` in SpeCa).
 
-Papiers de référence :
+Reference papers:
 
 - **SpeCa** — *Accelerating Diffusion Transformers with Speculative
-  Feature Caching* (Zou et al., sept. 2025). Couche-cible
-  empirique (27e sur DiT image), 6-7× speedup avec FID stable.
+  Feature Caching* (Zou et al., Sept. 2025). Empirically chosen target
+  layer (the 27th on an image DiT), 6-7× speedup with stable FID.
 - **TaylorSeer** — *Forecasting Features rather than Caching Them*
-  (mars 2025). Variante sans vérification ; s'effondre à 17.5% de
-  dégradation au speedup où SpeCa tient.
-- **Spiffy / SSD** (sept-oct. 2025) — speculative decoding pour
-  diffusion LLMs (token masking). Même pattern, axe différent.
+  (March 2025). A variant without verification; it collapses to 17.5%
+  degradation at the speedup where SpeCa holds.
+- **Spiffy / SSD** (Sept-Oct. 2025) — speculative decoding for diffusion
+  LLMs (token masking). Same pattern, different axis.
 
-## Caveat : lossy borné, pas lossless
+## Caveat: bounded lossy, not lossless
 
-Contrairement au speculative decoding LLM (lossless par construction
-via rejection sampling), SpeCa est **lossy mais borné** : convergence en
-variation totale conditionnée à un choix correct de schedule de seuil
-(cf. SpeCa Appendix G).
+Unlike LLM speculative decoding (lossless by construction through
+rejection sampling), SpeCa is **lossy but bounded**: convergence in total
+variation, provided the threshold schedule is chosen correctly (see SpeCa
+Appendix G).
 
-Pour la reproductibilité bit-exact, ne pas utiliser. Pour génération
-créative, le compromis est documenté et acceptable.
+Do not use it where bit-exact reproducibility is required. For creative
+generation, the trade-off is documented and acceptable.
 
-## Applicabilité à `mlx-arsenal`
+## Applicability to `mlx-arsenal`
 
-### Ce qui est *primitive* (extractible vers la lib)
+### What is a *primitive* (extractable into the library)
 
-- L'extrapolation Taylor-via-différences-finies (mais c'est ~20 lignes
-  d'algèbre — trop fin pour mériter son propre module).
-- L'orchestration draft → verify → accept/reject sur un axe itératif
-  abstrait.
-- La schedule de seuil géométrique.
+- Taylor extrapolation via finite differences (but it is ~20 lines of
+  algebra — too thin to deserve its own module).
+- The draft → verify → accept/reject orchestration along an abstract
+  iteration axis.
+- The geometric threshold schedule.
 
-### Ce qui reste *caller-side* (per-model)
+### What stays *caller-side* (per model)
 
-- **Sélection de la couche-cible de vérification** : pure ablation
-  empirique. SpeCa identifie la couche 27 sur leur DiT image ; chaque
-  port doit refaire l'ablation contre sa propre métrique de qualité
-  (FID, ImageReward, VBench, perplexité…).
-- **Calibration de τ₀ et β** : dépend du modèle, du schedule de
-  sampling, du domaine.
-- **Choix de l'ordre Taylor** : SpeCa utilise typiquement 1-3 selon le
-  régime.
-- **Définition de la « feature » trackée** : architecture-dépendant.
+- **Choosing the verification target layer**: pure empirical ablation.
+  SpeCa identifies layer 27 on their image DiT; every port has to redo
+  the ablation against its own quality metric (FID, ImageReward, VBench,
+  perplexity…).
+- **Calibrating τ₀ and β**: depends on the model, the sampling schedule,
+  and the domain.
+- **Choosing the Taylor order**: SpeCa typically uses 1-3 depending on
+  the regime.
+- **Defining the tracked "feature"**: architecture-dependent.
 
-### Décision actuelle
+### Current decision
 
-Un seul contrôleur opinionated, defaults SpeCa, exposé dans
-`mlx_arsenal.diffusion.verified_cache`. Pas de batch de primitives
-extraites ni d'ADR — la valeur unique vs `TeaCache` est trop fine pour
-justifier une roadmap multi-PR, et les vrais points durs (ablation
-couche-cible, calibration seuils) sont per-modèle de toute façon.
+A single opinionated controller with SpeCa defaults, exposed in
+`mlx_arsenal.diffusion.verified_cache`. No batch of extracted primitives
+and no ADR — the added value over `TeaCache` is too thin to justify a
+multi-PR roadmap, and the real hard parts (target-layer ablation,
+threshold calibration) are per-model anyway.
 
-À ré-évaluer si 2+ ports adoptent le pattern et révèlent des points
-durs réutilisables.
+Revisit if 2+ ports adopt the pattern and surface reusable hard parts.
 
-## Directions adjacentes notées mais non couvertes ici
+## Adjacent directions noted but not covered here
 
 - **Parallel sampling via Picard-Lindelöf iteration** (Shih et al. 2023,
-  *Accelerating Parallel Sampling* 2024) — résout l'ODE de diffusion
-  en parallèle sur plusieurs timesteps. Coût mémoire significatif ;
-  intéressant sur Mac Studio M3 Ultra (mémoire unifiée généreuse),
-  prohibitif sur M-series modeste.
-- **Accelerated Diffusion via Speculative Sampling** (jan-juil. 2025) —
-  exploite la connexion speculative sampling ↔ reflection maximal
-  coupling pour samplers stochastiques. *Lossless* au sens strict,
-  pertinent pour eval/repro.
-- **Parallel Sampling via Autospeculation** (nov. 2025) — résultat
-  théorique : speedup O(n) → O(√n) en haute précision.
+  *Accelerating Parallel Sampling* 2024) — solves the diffusion ODE in
+  parallel across several timesteps. Significant memory cost;
+  interesting on a Mac Studio M3 Ultra (generous unified memory),
+  prohibitive on modest M-series machines.
+- **Accelerated Diffusion via Speculative Sampling** (Jan-July 2025) —
+  exploits the link between speculative sampling and reflection maximal
+  coupling for stochastic samplers. *Lossless* in the strict sense,
+  relevant for evaluation / reproducibility.
+- **Parallel Sampling via Autospeculation** (Nov. 2025) — theoretical
+  result: O(n) → O(√n) speedup at high precision.
 
-Ces directions n'ont pas (encore) d'implémentation MLX et leur ROI
-mid-level n'est pas évident — à creuser indépendamment.
+These directions have no MLX implementation (yet) and their mid-level
+ROI is not obvious — to be explored separately.
 
-## Références
+## References
 
-- SpeCa : <https://arxiv.org/abs/2509.11628>
-- TaylorSeer : <https://arxiv.org/abs/2503.06923>
-- DiTFastAttn : <https://arxiv.org/abs/2406.08552>
-- Repo de référence pour SpeCa : <https://github.com/Shenyi-Z/Cache4Diffusion>
-- TeaCache : <https://github.com/ali-vilab/TeaCache>
+- SpeCa: <https://arxiv.org/abs/2509.11628>
+- TaylorSeer: <https://arxiv.org/abs/2503.06923>
+- DiTFastAttn: <https://arxiv.org/abs/2406.08552>
+- Reference repo for SpeCa: <https://github.com/Shenyi-Z/Cache4Diffusion>
+- TeaCache: <https://github.com/ali-vilab/TeaCache>
