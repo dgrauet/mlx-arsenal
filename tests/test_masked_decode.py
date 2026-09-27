@@ -1,6 +1,9 @@
 """Tests for mlx_arsenal.diffusion.masked_decode."""
 
 import math
+import re
+from pathlib import Path
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
@@ -391,3 +394,49 @@ class TestBlockRanges:
             block_ranges(0, 0, 2)
         with pytest.raises(ValueError, match="block_len"):
             block_ranges(0, 4, 0)
+
+
+def _load_reference_loop() -> Any:
+    note = Path(__file__).parents[1] / "docs" / "research" / "dllm-block-decoding.md"
+    match = re.search(r"<!-- reference-loop -->\s*```python\n(.*?)```", note.read_text(), re.S)
+    assert match, "reference loop block not found in the research note"
+    namespace: dict[str, Any] = {}
+    exec(match.group(1), namespace)
+    return namespace["decode"]
+
+
+class TestReferenceLoop:
+    V, D, MASK = 40, 16, 39
+
+    def _model(self, seed: int):
+        rng = np.random.default_rng(seed)
+        emb = array_from_any(rng.normal(size=(self.V, self.D)).astype(np.float32))
+        proj = array_from_any(rng.normal(size=(self.D, self.V)).astype(np.float32))
+
+        def model(x: mx.array) -> mx.array:
+            h = emb[x]
+            return 3.0 * (h + mx.mean(h, axis=1, keepdims=True)) @ proj
+
+        return model
+
+    @pytest.mark.parametrize(("threshold", "block_len"), [(0.9, 4), (0.0, 8), (1.0, 3)])
+    def test_decodes_every_position(self, threshold, block_len):
+        decode = _load_reference_loop()
+        prompt = mx.array([[1, 2, 3], [4, 5, 6]], dtype=mx.int32)
+        out, forwards = decode(
+            self._model(0),
+            prompt,
+            gen_len=12,
+            block_len=block_len,
+            mask_id=self.MASK,
+            threshold=threshold,
+        )
+        assert out.shape == (2, 15)
+        assert mx.array_equal(out[:, :3], prompt).item()
+        assert not mx.any(out == self.MASK).item()
+        n_blocks = len(block_ranges(3, 12, block_len))
+        assert n_blocks <= forwards <= 12
+        if threshold == 0.0:
+            assert forwards == n_blocks  # everything commits in one step per block
+        if threshold == 1.0:
+            assert forwards == 12  # one forced commit per step
