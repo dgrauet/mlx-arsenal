@@ -8,6 +8,7 @@ import pytest
 
 from mlx_arsenal._typing import item_float
 from mlx_arsenal.attention import (
+    block_causal_mask,
     causal_mask,
     frame_stride_diagonal_mask,
     radial_box_mask,
@@ -49,6 +50,45 @@ class TestCausalMask:
     def test_dtype(self):
         m = causal_mask(seq_len=3, dtype=mx.float16)
         assert m.dtype == mx.float16
+
+
+class TestBlockCausalMask:
+    def test_pattern(self):
+        # blocks {0, 1} and {2, 3}: bidirectional inside, causal across.
+        grid = cast(list[list[float]], block_causal_mask(4, 2)[0, 0].tolist())
+        visible = [[v == 0.0 for v in row] for row in grid]
+        assert visible == [
+            [True, True, False, False],
+            [True, True, False, False],
+            [True, True, True, True],
+            [True, True, True, True],
+        ]
+
+    @pytest.mark.parametrize(("seq_len", "offset"), [(5, 0), (3, 4)])
+    def test_block_len_one_is_causal(self, seq_len, offset):
+        assert mx.array_equal(
+            block_causal_mask(seq_len, 1, offset=offset), causal_mask(seq_len, offset=offset)
+        ).item()
+
+    def test_offset_uses_absolute_blocks(self):
+        # queries at absolute positions 3, 4 with blocks of 4: position 3 closes
+        # block 0 (keys 0..3), position 4 opens block 1 (keys 0..7 in range).
+        m = block_causal_mask(2, 4, offset=3)
+        assert m.shape == (1, 1, 2, 5)
+        grid = cast(list[list[float]], m[0, 0].tolist())
+        assert [v == 0.0 for v in grid[0]] == [True, True, True, True, False]
+        assert [v == 0.0 for v in grid[1]] == [True, True, True, True, True]
+
+    def test_dtype(self):
+        assert block_causal_mask(4, 2, dtype=mx.float16).dtype == mx.float16
+
+    def test_validation(self):
+        with pytest.raises(ValueError, match="seq_len"):
+            block_causal_mask(0, 2)
+        with pytest.raises(ValueError, match="block_len"):
+            block_causal_mask(4, 0)
+        with pytest.raises(ValueError, match="offset"):
+            block_causal_mask(4, 2, offset=-1)
 
 
 class TestSlidingWindowMask:
