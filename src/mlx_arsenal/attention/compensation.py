@@ -18,6 +18,8 @@ match the shipped Sliding Tile Attention masks.
 
 from __future__ import annotations
 
+import math
+
 import mlx.core as mx
 
 from mlx_arsenal.attention._thw import thw_coords as _thw_coords
@@ -59,3 +61,111 @@ def tile_labels(T: int, H: int, W: int, *, tile: tuple[int, int, int]) -> mx.arr
     h_tile = mx.floor_divide(h_flat, th)
     w_tile = mx.floor_divide(w_flat, tw)
     return ((t_tile * gh + h_tile) * gw + w_tile).astype(mx.int32)
+
+
+def _cluster_labels(labels: mx.array, B: int, H: int, S: int, C: int, name: str) -> mx.array:
+    """Validate `(S,)` / `(B, H, S)` integer labels in `[0, C)`; return `(B, H, S)` int32."""
+    if not mx.issubdtype(labels.dtype, mx.integer):
+        raise ValueError(f"{name} must have an integer dtype, got {labels.dtype}")
+    if tuple(labels.shape) not in ((S,), (B, H, S)):
+        raise ValueError(f"{name} must have shape ({S},) or {(B, H, S)}, got {tuple(labels.shape)}")
+    lo, hi = mx.min(labels).item(), mx.max(labels).item()
+    if lo < 0 or hi >= C:
+        raise ValueError(f"{name} values must lie in [0, {C}), got range [{lo}, {hi}]")
+    return mx.broadcast_to(labels.astype(mx.int32), (B, H, S))
+
+
+def centroid_compensated_attention(
+    q: mx.array,
+    k: mx.array,
+    v: mx.array,
+    *,
+    q_labels: mx.array,
+    k_labels: mx.array,
+    block_mask: mx.array,
+    scale: float | None = None,
+) -> mx.array:
+    """Block-sparse attention with skipped blocks compensated by key centroids (SVG-EAR).
+
+    Queries and keys are grouped into clusters by integer labels. For every
+    (query cluster, key cluster) block kept by `block_mask`, attention is
+    exact. For a skipped block, each key and value is replaced by the mean
+    key and mean value of its cluster. The result is exactly dense attention
+    over that modified key set, so every output row is still a convex
+    softmax average — skipped blocks are approximated, not dropped.
+
+    Keys of one cluster share a single centroid logit, so the skipped part
+    collapses to one extra key per cluster carrying a `log n_c` bias
+    (`n_c` = cluster size). The implementation therefore runs one
+    `mx.fast.scaled_dot_product_attention` over `[K; K̄]` / `[V; V̄]` with an
+    additive `(Sq, Sk + Ck)` mask. It is dense — O(Sq·(Sk+Ck)) mask memory,
+    no speedup — and meant as a quality tool and a reference for a future
+    block-sparse kernel.
+
+    With `block_mask` all `0` this is exact dense attention; with it all
+    `-inf`, attention over the cluster centroids only.
+
+    Args:
+        q: `(B, H, Sq, D)` queries.
+        k: `(B, H, Sk, D)` keys. Same `(B, H)` as `q` (GQA not supported).
+        v: `(B, H, Sk, Dv)` values.
+        q_labels: `(Sq,)` or `(B, H, Sq)` integer query-cluster labels in `[0, Cq)`.
+        k_labels: `(Sk,)` or `(B, H, Sk)` integer key-cluster labels in `[0, Ck)`.
+            A cluster with no member contributes nothing.
+        block_mask: `(..., Cq, Ck)` additive mask with entries `0` (block
+            computed exactly) or `-inf` (block skipped and compensated),
+            broadcastable to `(B, H, Cq, Ck)`. For Sliding Tile Attention,
+            see :func:`tile_labels`.
+        scale: Logit scale. Defaults to `1 / sqrt(D)`.
+
+    Returns:
+        `(B, H, Sq, Dv)` attention output in `q.dtype`.
+    """
+    if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
+        raise ValueError(f"q, k, v must have rank 4, got {q.ndim}, {k.ndim}, {v.ndim}")
+    B, H, Sq, D = q.shape
+    Sk = k.shape[2]
+    if k.shape[:2] != q.shape[:2] or v.shape[:2] != q.shape[:2]:
+        raise ValueError(
+            f"q, k, v must share (batch, heads), got {q.shape[:2]}, {k.shape[:2]}, {v.shape[:2]}"
+        )
+    if v.shape[2] != Sk:
+        raise ValueError(f"k and v key length differ: {Sk} vs {v.shape[2]}")
+    if k.shape[3] != D:
+        raise ValueError(f"q and k head dim differ: {D} vs {k.shape[3]}")
+    if block_mask.ndim < 2:
+        raise ValueError(f"block_mask must have rank >= 2, got shape {tuple(block_mask.shape)}")
+    Cq, Ck = block_mask.shape[-2:]
+    ql = _cluster_labels(q_labels, B, H, Sq, Cq, "q_labels")
+    kl = _cluster_labels(k_labels, B, H, Sk, Ck, "k_labels")
+
+    bm = block_mask.astype(mx.float32)
+    kept = mx.equal(bm, 0.0)
+    if not mx.all(mx.logical_or(kept, mx.isneginf(bm))).item():
+        raise ValueError("block_mask entries must be 0 or -inf")
+    try:
+        keep = mx.broadcast_to(kept, (B, H, Cq, Ck))
+    except ValueError as e:
+        raise ValueError(
+            f"block_mask shape {tuple(block_mask.shape)} does not broadcast to {(B, H, Cq, Ck)}"
+        ) from e
+
+    onehot = mx.equal(mx.expand_dims(kl, -1), mx.arange(Ck)).astype(mx.float32)  # (B, H, Sk, Ck)
+    counts = onehot.sum(axis=-2)  # (B, H, Ck)
+    inv_counts = mx.expand_dims(1.0 / mx.maximum(counts, 1.0), -1)
+    onehot_t = onehot.swapaxes(-1, -2)
+    k_bar = (onehot_t @ k.astype(mx.float32)) * inv_counts
+    v_bar = (onehot_t @ v.astype(mx.float32)) * inv_counts
+
+    keep_rows = mx.take_along_axis(keep, mx.expand_dims(ql, -1), axis=-2)  # (B, H, Sq, Ck)
+    keep_tok = mx.take_along_axis(keep_rows, mx.expand_dims(kl, -2), axis=-1)  # (B, H, Sq, Sk)
+    neg_inf = mx.array(float("-inf"), dtype=mx.float32)
+    tok_mask = mx.where(keep_tok, 0.0, neg_inf)
+    log_n = mx.expand_dims(mx.log(counts), -2)  # -inf for empty clusters
+    cent_mask = mx.where(keep_rows, neg_inf, log_n)
+    mask = mx.concatenate([tok_mask, cent_mask], axis=-1).astype(q.dtype)
+
+    k_ext = mx.concatenate([k, k_bar.astype(k.dtype)], axis=2)
+    v_ext = mx.concatenate([v, v_bar.astype(v.dtype)], axis=2)
+    s = 1.0 / math.sqrt(D) if scale is None else scale
+    return mx.fast.scaled_dot_product_attention(q, k_ext, v_ext, scale=s, mask=mask)

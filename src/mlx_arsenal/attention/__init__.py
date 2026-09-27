@@ -1,4 +1,7 @@
-from mlx_arsenal.attention.compensation import tile_labels
+from mlx_arsenal.attention.compensation import (
+    centroid_compensated_attention,
+    tile_labels,
+)
 from mlx_arsenal.attention.masks import causal_mask, sliding_window_mask
 from mlx_arsenal.attention.permute import (
     block_contiguous_permutation,
@@ -25,6 +28,7 @@ __all__ = [
     "Kind",
     "block_contiguous_permutation",
     "causal_mask",
+    "centroid_compensated_attention",
     "classify",
     "classify_heads_from_probs",
     "classify_heads_from_qk",
