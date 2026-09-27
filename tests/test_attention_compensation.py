@@ -203,6 +203,20 @@ class TestCentroidCompensatedAttention:
         assert out.dtype == mx.bfloat16
         assert mx.allclose(out.astype(mx.float32), ref, atol=5e-2).item()
 
+    def test_mixed_dtypes_follow_sdpa_promotion(self):
+        q, k, v = self._qkv(53)
+        q16, k16, v16 = q.astype(mx.bfloat16), k.astype(mx.float16), v.astype(mx.float16)
+        out = centroid_compensated_attention(
+            q16,
+            k16,
+            v16,
+            q_labels=_balanced_labels(self.Sq, self.Cq, 54),
+            k_labels=_balanced_labels(self.Sk, self.Ck, 55),
+            block_mask=_random_block_mask((self.Cq, self.Ck), 56),
+        )
+        sdpa = mx.fast.scaled_dot_product_attention(q16, k16, v16, scale=1.0)
+        assert out.dtype == sdpa.dtype == mx.float32
+
     def test_beats_hard_drop_on_clustered_keys(self):
         # 8 tight key clusters: centroids are good stand-ins for skipped keys.
         rng = np.random.default_rng(48)
@@ -315,6 +329,10 @@ class TestCentroidCompensatedAttention:
             call(block_mask=mx.zeros((5, self.Cq, self.Ck)))
         with pytest.raises(ValueError, match="rank"):
             call(block_mask=mx.zeros((self.Ck,)))
+        with pytest.raises(ValueError, match="non-empty"):
+            call(q=q[:, :, :0], q_labels=ql[:0])
+        with pytest.raises(ValueError, match="non-empty"):
+            call(k=k[:, :, :0], v=v[:, :, :0], k_labels=kl[:0])
 
 
 class TestSelectProbeRows:
