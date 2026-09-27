@@ -192,3 +192,79 @@ def topk_transfer(confidence: mx.array, candidates: mx.array, k: int | mx.array)
         kk = mx.array(k, dtype=mx.int32)
     rank = _rank(confidence, candidates, descending=True)
     return mx.logical_and(candidates, rank < kk)
+
+
+def _sorted_prefix(
+    scores: mx.array, candidates: mx.array, admissible: mx.array, *, descending: bool
+) -> mx.array:
+    """Select the longest sorted prefix whose positions are all `admissible`.
+
+    `admissible[:, i]` refers to the `i`-th candidate in sorted order;
+    positions past the row's candidate count are ignored.
+    """
+    count = mx.sum(candidates, axis=-1, keepdims=True)
+    in_range = mx.arange(scores.shape[-1]) < count
+    passed = mx.logical_and(admissible, in_range).astype(mx.int32)
+    n = mx.sum(mx.cumprod(passed, axis=-1), axis=-1, keepdims=True)
+    rank = _rank(scores, candidates, descending=descending)
+    return mx.logical_and(candidates, rank < n)
+
+
+def factor_transfer(confidence: mx.array, candidates: mx.array, factor: float) -> mx.array:
+    """Commit a confidence-dependent number of candidates (Fast-dLLM factor rule).
+
+    Candidates are sorted by confidence (descending) and the longest prefix
+    of length `n` is committed such that every `i <= n` satisfies
+    `c_(i) >= 1 - factor / (i + 1)`, i.e. `(i + 1)(1 - c_(i)) <= factor`.
+    The most confident candidate is always committed. This is Fast-dLLM's
+    `get_transfer_index_dynamic`, except for its off-by-one: when only the
+    last sorted candidate fails, the reference commits every candidate; this
+    function does not.
+
+    Args:
+        confidence: `(B, L)` score in `[0, 1]`, higher commits first.
+        candidates: `(B, L)` bool, positions that may be committed.
+        factor: Parallelism factor, `> 0`; larger commits more per step.
+
+    Returns:
+        `(B, L)` bool, a subset of `candidates` with one or more commits per
+        non-empty row.
+    """
+    _check_rule_inputs(confidence, candidates, "confidence")
+    if not factor > 0:
+        raise ValueError(f"factor must be > 0, got {factor}")
+    filled = mx.where(candidates, confidence.astype(mx.float32), float("-inf"))
+    sorted_conf = -mx.sort(-filled, axis=-1)
+    i = mx.arange(1, confidence.shape[-1] + 1).astype(mx.float32)
+    required = 1.0 - factor / (i + 1.0)
+    admissible = mx.logical_or(sorted_conf >= required, i == 1)
+    return _sorted_prefix(confidence, candidates, admissible, descending=True)
+
+
+def entropy_bound_transfer(entropy: mx.array, candidates: mx.array, bound: float) -> mx.array:
+    """Commit low-entropy candidates within a total entropy budget (EB-Sampler).
+
+    Candidates are sorted by entropy (ascending) and the longest prefix is
+    committed whose entropy, minus its largest term, stays within `bound`:
+    `sum_{j < i} H_(j) <= bound` for every committed `i`. The lowest-entropy
+    candidate is always committed. This is the EB-Sampler rule, also used by
+    DiffusionGemma's `EntropyBoundSampler` to accept canvas tokens.
+
+    Args:
+        entropy: `(B, L)` non-negative per-position entropy (e.g.
+            :attr:`TokenStats.entropy`), lower commits first.
+        candidates: `(B, L)` bool, positions that may be committed.
+        bound: Entropy budget `>= 0` (nats).
+
+    Returns:
+        `(B, L)` bool, a subset of `candidates` with one or more commits per
+        non-empty row.
+    """
+    _check_rule_inputs(entropy, candidates, "entropy")
+    if not bound >= 0:
+        raise ValueError(f"bound must be >= 0, got {bound}")
+    filled = mx.where(candidates, entropy.astype(mx.float32), 0.0)
+    rank = _rank(entropy, candidates, descending=False)
+    sorted_ent = mx.take_along_axis(filled, mx.argsort(rank, axis=-1), axis=-1)
+    before = mx.cumsum(sorted_ent, axis=-1) - sorted_ent
+    return _sorted_prefix(entropy, candidates, before <= bound, descending=False)

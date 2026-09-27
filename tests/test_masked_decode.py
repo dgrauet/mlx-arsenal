@@ -7,7 +7,13 @@ import numpy as np
 import pytest
 
 from mlx_arsenal._typing import array_from_any, item_float
-from mlx_arsenal.diffusion import threshold_transfer, token_stats, topk_transfer
+from mlx_arsenal.diffusion import (
+    entropy_bound_transfer,
+    factor_transfer,
+    threshold_transfer,
+    token_stats,
+    topk_transfer,
+)
 
 
 def _np_softmax(logits: np.ndarray) -> np.ndarray:
@@ -33,6 +39,53 @@ def _fastdllm_transfer(
             for idx in select[1:]:
                 if confidence[j, idx] < threshold:
                     out[j, idx] = False
+    return out
+
+
+def _fastdllm_factor(
+    conf: np.ndarray, mask: np.ndarray, factor: float, *, quirk: bool
+) -> np.ndarray:
+    """Transcription of Fast-dLLM v1 `get_transfer_index_dynamic` selection.
+
+    With `quirk=True` it keeps the reference's off-by-one: when only the last
+    sorted candidate fails, every candidate is selected.
+    """
+    confidence = np.where(mask, conf.astype(np.float64), -np.inf)
+    out = np.zeros_like(mask)
+    for j in range(conf.shape[0]):
+        n_cand = int(mask[j].sum())
+        if n_cand == 0:
+            continue
+        threshs = [1 - factor / (n + 1) for n in range(1, n_cand + 1)]
+        threshs[0] = -1
+        sorted_c = np.sort(confidence[j][mask[j]])[::-1]
+        top_i = 0
+        broke = False
+        for top_i in range(n_cand):
+            if sorted_c[top_i] < threshs[top_i]:
+                broke = True
+                break
+        if quirk:
+            if top_i == 0 or top_i == n_cand - 1:
+                top_i += 1
+        elif not broke:
+            top_i = n_cand
+        select = np.argsort(-confidence[j], kind="stable")[:top_i]
+        out[j, select] = True
+    return out
+
+
+def _eb_accept(entropy: np.ndarray, mask: np.ndarray, bound: float) -> np.ndarray:
+    """EB-Sampler acceptance (HF DiffusionGemma): keep while cumsum - current <= bound."""
+    out = np.zeros_like(mask)
+    for j in range(entropy.shape[0]):
+        idx = np.flatnonzero(mask[j])
+        if idx.size == 0:
+            continue
+        order = idx[np.argsort(entropy[j, idx].astype(np.float64), kind="stable")]
+        h = entropy[j, order].astype(np.float64)
+        accept = (np.cumsum(h) - h) <= bound
+        out[j, order[accept]] = True
     return out
 
 
@@ -214,3 +267,71 @@ class TestTopkTransfer:
             topk_transfer(conf, cand, mx.array([1, -2]))
         with pytest.raises(ValueError, match="k"):
             topk_transfer(conf, cand, mx.array([1.0, 2.0]))
+
+
+class TestFactorTransfer:
+    @pytest.mark.parametrize("factor", [0.1, 0.5, 1.0, 2.0])
+    def test_matches_fastdllm_without_off_by_one(self, factor):
+        rng = np.random.default_rng(20)
+        conf = (1 - rng.random((8, 16)) ** 3 * 0.5).astype(np.float32)  # mostly confident
+        mask = rng.random((8, 16)) < 0.7
+        mask[0] = False
+        out = factor_transfer(array_from_any(conf), array_from_any(mask), factor)
+        ref = _fastdllm_factor(conf, mask, factor, quirk=False)
+        assert np.array(out).tolist() == ref.tolist()
+
+    def test_last_failure_is_not_promoted(self):
+        # sorted [0.99, 0.9, 0.1], factor 1: thresholds (-1, 0.667, 0.75) -> the
+        # third fails. Fast-dLLM selects all three (off-by-one); we select two.
+        conf = np.array([[0.1, 0.99, 0.9]], dtype=np.float32)
+        mask = np.ones((1, 3), dtype=bool)
+        assert _fastdllm_factor(conf, mask, 1.0, quirk=True).tolist() == [[True, True, True]]
+        out = factor_transfer(array_from_any(conf), array_from_any(mask), 1.0)
+        assert out.tolist() == [[False, True, True]]
+
+    def test_always_commits_one(self):
+        conf = mx.array([[0.01, 0.02, 0.03], [0.5, 0.5, 0.5]])
+        cand = mx.array([[True, True, True], [False, False, False]])
+        assert factor_transfer(conf, cand, 0.01).tolist() == [
+            [False, False, True],
+            [False, False, False],
+        ]
+
+    def test_validation(self):
+        conf, cand = mx.zeros((1, 3)), mx.ones((1, 3), dtype=mx.bool_)
+        with pytest.raises(ValueError, match="factor"):
+            factor_transfer(conf, cand, 0.0)
+
+
+class TestEntropyBoundTransfer:
+    @pytest.mark.parametrize("bound", [0.0, 0.1, 1.0, 5.0])
+    def test_matches_eb_sampler(self, bound):
+        rng = np.random.default_rng(21)
+        entropy = (rng.random((8, 20)) ** 2).astype(np.float32)
+        mask = rng.random((8, 20)) < 0.7
+        mask[0] = False
+        out = entropy_bound_transfer(array_from_any(entropy), array_from_any(mask), bound)
+        ref = _eb_accept(entropy, mask, bound)
+        assert np.array(out).tolist() == ref.tolist()
+
+    def test_zero_bound_commits_lowest_entropy_only(self):
+        ent = mx.array([[0.5, 0.2, 0.9, 0.2]])
+        cand = mx.ones((1, 4), dtype=mx.bool_)
+        # tie at 0.2 between positions 1 and 3: position 1 first; the second 0.2
+        # would add 0.2 > 0 to the budget.
+        assert entropy_bound_transfer(ent, cand, 0.0).tolist() == [[False, True, False, False]]
+
+    def test_rows_are_independent(self):
+        ent = mx.array([[0.1, 0.1, 0.1], [0.1, 0.1, 0.1]])
+        cand = mx.array([[True, True, True], [False, True, False]])
+        assert entropy_bound_transfer(ent, cand, 0.15).tolist() == [
+            [True, True, False],
+            [False, True, False],
+        ]
+
+    def test_validation(self):
+        ent, cand = mx.zeros((1, 3)), mx.ones((1, 3), dtype=mx.bool_)
+        with pytest.raises(ValueError, match="bound"):
+            entropy_bound_transfer(ent, cand, -0.1)
+        with pytest.raises(ValueError, match="bool"):
+            entropy_bound_transfer(ent, cand.astype(mx.float32), 0.1)

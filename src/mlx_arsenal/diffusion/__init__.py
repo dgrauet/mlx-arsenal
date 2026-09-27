@@ -8,7 +8,14 @@ from .cfg_skip import (
     cfg_skip_mask,
 )
 from .ddim import DDIMScheduler
-from .masked_decode import TokenStats, threshold_transfer, token_stats, topk_transfer
+from .masked_decode import (
+    TokenStats,
+    entropy_bound_transfer,
+    factor_transfer,
+    threshold_transfer,
+    token_stats,
+    topk_transfer,
+)
 from .samplers import classifier_free_guidance, euler_step
 from .schedulers import (
     FlowMatchEulerDiscreteScheduler,
@@ -21,6 +28,8 @@ from .verified_cache import VerifiedFeatureCache, geometric_threshold
 from .window_residual import WindowResidualController
 
 __all__ = [
+    "entropy_bound_transfer",
+    "factor_transfer",
     "TokenStats",
     "threshold_transfer",
     "token_stats",
