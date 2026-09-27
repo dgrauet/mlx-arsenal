@@ -19,9 +19,12 @@ match the shipped Sliding Tile Attention masks.
 from __future__ import annotations
 
 import math
+from collections import Counter
+from typing import cast
 
 import mlx.core as mx
 
+from mlx_arsenal._typing import item_int
 from mlx_arsenal.attention._thw import thw_coords as _thw_coords
 from mlx_arsenal.attention._thw import validate_thw as _validate_thw
 
@@ -69,7 +72,7 @@ def _cluster_labels(labels: mx.array, B: int, H: int, S: int, C: int, name: str)
         raise ValueError(f"{name} must have an integer dtype, got {labels.dtype}")
     if tuple(labels.shape) not in ((S,), (B, H, S)):
         raise ValueError(f"{name} must have shape ({S},) or {(B, H, S)}, got {tuple(labels.shape)}")
-    lo, hi = mx.min(labels).item(), mx.max(labels).item()
+    lo, hi = item_int(mx.min(labels)), item_int(mx.max(labels))
     if lo < 0 or hi >= C:
         raise ValueError(f"{name} values must lie in [0, {C}), got range [{lo}, {hi}]")
     return mx.broadcast_to(labels.astype(mx.int32), (B, H, S))
@@ -169,3 +172,71 @@ def centroid_compensated_attention(
     v_ext = mx.concatenate([v, v_bar.astype(v.dtype)], axis=2)
     s = 1.0 / math.sqrt(D) if scale is None else scale
     return mx.fast.scaled_dot_product_attention(q, k_ext, v_ext, scale=s, mask=mask)
+
+
+def _middle_out(n: int) -> list[int]:
+    """Indices of `range(n)` from the middle outward: mid, mid+1, mid-1, mid+2, ..."""
+    mid = (n - 1) // 2
+    order = [mid]
+    for d in range(1, n):
+        if mid + d < n:
+            order.append(mid + d)
+        if mid - d >= 0:
+            order.append(mid - d)
+    return order
+
+
+def select_probe_rows(q_labels: mx.array, num_probes: int) -> tuple[mx.array, mx.array]:
+    """Pick probe query rows for :func:`probe_residual_correction`, spread across clusters.
+
+    Round-robin over the non-empty clusters in increasing label order: pass
+    `r` takes, from every cluster that still has unused members, its member
+    at middle-out rank `r` (positions sorted, middle first, then alternating
+    outward), until `num_probes` rows are taken.
+
+    Deviation from SparsePR, which takes the row nearest to each query-group
+    centroid: that needs `q` and per-head groups. This selection depends only
+    on the labels, so a single `probe_idx` serves every head. Pass your own
+    `probe_idx` to :func:`probe_residual_correction` for another policy.
+
+    Args:
+        q_labels: `(Sq,)` non-negative integer query-cluster labels.
+        num_probes: Number of rows to pick, in `[1, Sq]`.
+
+    Returns:
+        `(probe_idx, weights)`, both `(num_probes,)`: int32 row indices and
+        float32 weights `|G_a| / m_a` (cluster size over probes taken from
+        that cluster). When every cluster gets at least one probe, the
+        weights sum to `Sq`.
+    """
+    if q_labels.ndim != 1:
+        raise ValueError(f"q_labels must be 1D, got shape {tuple(q_labels.shape)}")
+    if not mx.issubdtype(q_labels.dtype, mx.integer):
+        raise ValueError(f"q_labels must have an integer dtype, got {q_labels.dtype}")
+    S = q_labels.shape[0]
+    if not 1 <= num_probes <= S:
+        raise ValueError(f"num_probes must be in [1, {S}], got {num_probes}")
+    labels = cast(list[int], q_labels.tolist())
+    if min(labels) < 0:
+        raise ValueError("q_labels must be non-negative")
+
+    members: dict[int, list[int]] = {}
+    for pos, lab in enumerate(labels):
+        members.setdefault(lab, []).append(pos)
+    groups = sorted(members)
+    orders = {g: [members[g][i] for i in _middle_out(len(members[g]))] for g in groups}
+
+    picks: list[tuple[int, int]] = []
+    rank = 0
+    while len(picks) < num_probes:
+        for g in groups:
+            if rank < len(orders[g]):
+                picks.append((orders[g][rank], g))
+                if len(picks) == num_probes:
+                    break
+        rank += 1
+
+    taken = Counter(g for _, g in picks)
+    idx = [pos for pos, _ in picks]
+    weights = [len(members[g]) / taken[g] for _, g in picks]
+    return mx.array(idx, dtype=mx.int32), mx.array(weights, dtype=mx.float32)

@@ -6,8 +6,10 @@ import mlx.core as mx
 import numpy as np
 import pytest
 
+from mlx_arsenal._typing import array_from_any, item_float
 from mlx_arsenal.attention import (
     centroid_compensated_attention,
+    select_probe_rows,
     sliding_tile_block_mask,
     tile_labels,
 )
@@ -18,13 +20,13 @@ NEG_INF = float("-inf")
 def _balanced_labels(S: int, C: int, seed: int) -> mx.array:
     """Labels in [0, C) with every cluster non-empty, shuffled."""
     rng = np.random.default_rng(seed)
-    return mx.array(rng.permutation(np.arange(S) % C).astype(np.int32))
+    return array_from_any(rng.permutation(np.arange(S) % C).astype(np.int32))
 
 
 def _random_block_mask(shape: tuple[int, ...], seed: int, p_skip: float = 0.5) -> mx.array:
     rng = np.random.default_rng(seed)
     skipped = rng.random(shape) < p_skip
-    return mx.array(np.where(skipped, NEG_INF, 0.0).astype(np.float32))
+    return array_from_any(np.where(skipped, NEG_INF, 0.0).astype(np.float32))
 
 
 def _replacement_oracle(q, k, v, q_labels, k_labels, block_mask, scale):
@@ -189,15 +191,12 @@ class TestCentroidCompensatedAttention:
 
     def test_bf16_inputs(self):
         q, k, v = self._qkv(44)
-        kwargs = {
-            "q_labels": _balanced_labels(self.Sq, self.Cq, 45),
-            "k_labels": _balanced_labels(self.Sk, self.Ck, 46),
-            "block_mask": _random_block_mask((self.Cq, self.Ck), 47),
-        }
-        ref = centroid_compensated_attention(q, k, v, **kwargs)
-        out = centroid_compensated_attention(
-            q.astype(mx.bfloat16), k.astype(mx.bfloat16), v.astype(mx.bfloat16), **kwargs
-        )
+        ql = _balanced_labels(self.Sq, self.Cq, 45)
+        kl = _balanced_labels(self.Sk, self.Ck, 46)
+        bm = _random_block_mask((self.Cq, self.Ck), 47)
+        ref = centroid_compensated_attention(q, k, v, q_labels=ql, k_labels=kl, block_mask=bm)
+        q16, k16, v16 = (x.astype(mx.bfloat16) for x in (q, k, v))
+        out = centroid_compensated_attention(q16, k16, v16, q_labels=ql, k_labels=kl, block_mask=bm)
         assert out.dtype == mx.bfloat16
         assert mx.allclose(out.astype(mx.float32), ref, atol=5e-2).item()
 
@@ -214,17 +213,17 @@ class TestCentroidCompensatedAttention:
         v = mx.array(
             (centers_v[kl_np] + 0.05 * rng.normal(size=(C * per, D)))[None, None], dtype=mx.float32
         )
-        q = mx.array(rng.normal(size=(1, 1, 32, D)), dtype=mx.float32)
+        q = array_from_any(rng.normal(size=(1, 1, 32, D)), dtype=mx.float32)
         ql = mx.zeros((32,), dtype=mx.int32)
         bm = mx.array([[0.0, 0.0, 0.0, NEG_INF, NEG_INF, NEG_INF, NEG_INF, NEG_INF]])
-        kl = mx.array(kl_np.astype(np.int32))
+        kl = array_from_any(kl_np.astype(np.int32))
         dense = _dense(q, k, v, 1.0 / math.sqrt(D))
         comp = centroid_compensated_attention(q, k, v, q_labels=ql, k_labels=kl, block_mask=bm)
         drop = mx.fast.scaled_dot_product_attention(
             q, k, v, scale=1.0 / math.sqrt(D), mask=mx.take(bm[0], kl)[None]
         )
-        err_comp = mx.linalg.norm(comp - dense).item()
-        err_drop = mx.linalg.norm(drop - dense).item()
+        err_comp = item_float(mx.linalg.norm(comp - dense))
+        err_drop = item_float(mx.linalg.norm(drop - dense))
         assert err_comp < 0.2 * err_drop
 
     def test_sta_recipe_matches_oracle(self):
@@ -277,3 +276,47 @@ class TestCentroidCompensatedAttention:
             call(block_mask=mx.zeros((5, self.Cq, self.Ck)))
         with pytest.raises(ValueError, match="rank"):
             call(block_mask=mx.zeros((self.Ck,)))
+
+
+class TestSelectProbeRows:
+    # clusters: 0 -> positions [0, 1, 2], 1 -> [3, 4], 2 -> [5]
+    labels = mx.array([0, 0, 0, 1, 1, 2], dtype=mx.int32)
+
+    def test_round_robin_middle_out(self):
+        idx, w = select_probe_rows(self.labels, 5)
+        # pass 0 takes each cluster's middle member, pass 1 the next one out.
+        assert idx.dtype == mx.int32
+        assert idx.tolist() == [1, 3, 5, 2, 4]
+        assert w.dtype == mx.float32
+        assert w.tolist() == [1.5, 1.0, 1.0, 1.5, 1.0]
+
+    def test_weights_sum_to_sequence_length(self):
+        labels = tile_labels(2, 4, 4, tile=(1, 2, 2))
+        for num in (8, 13, 32):
+            _, w = select_probe_rows(labels, num)
+            assert item_float(mx.sum(w)) == pytest.approx(32.0)
+
+    def test_fewer_probes_than_clusters(self):
+        idx, w = select_probe_rows(self.labels, 2)
+        assert idx.tolist() == [1, 3]
+        assert w.tolist() == [3.0, 2.0]
+
+    def test_clusters_taken_in_label_order(self):
+        idx, _ = select_probe_rows(mx.array([2, 0, 2, 0], dtype=mx.int32), 2)
+        assert idx.tolist() == [1, 0]
+
+    def test_all_rows_distinct(self):
+        idx, _ = select_probe_rows(self.labels, 6)
+        assert sorted(np.array(idx).tolist()) == list(range(6))
+
+    def test_validation(self):
+        with pytest.raises(ValueError, match="1D"):
+            select_probe_rows(self.labels[None], 2)
+        with pytest.raises(ValueError, match="integer"):
+            select_probe_rows(self.labels.astype(mx.float32), 2)
+        with pytest.raises(ValueError, match="non-negative"):
+            select_probe_rows(mx.array([0, -1], dtype=mx.int32), 1)
+        with pytest.raises(ValueError, match="num_probes"):
+            select_probe_rows(self.labels, 0)
+        with pytest.raises(ValueError, match="num_probes"):
+            select_probe_rows(self.labels, 7)

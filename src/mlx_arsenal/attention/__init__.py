@@ -1,5 +1,6 @@
 from mlx_arsenal.attention.compensation import (
     centroid_compensated_attention,
+    select_probe_rows,
     tile_labels,
 )
 from mlx_arsenal.attention.masks import causal_mask, sliding_window_mask
@@ -36,6 +37,7 @@ __all__ = [
     "invert_permutation",
     "radial_box_mask",
     "radial_gaussian_mask",
+    "select_probe_rows",
     "sliding_tile_block_mask",
     "sliding_tile_centered_mask",
     "sliding_window_mask",
