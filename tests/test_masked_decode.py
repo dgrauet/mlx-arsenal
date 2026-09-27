@@ -9,7 +9,7 @@ import mlx.core as mx
 import numpy as np
 import pytest
 
-from mlx_arsenal._typing import array_from_any, item_float
+from mlx_arsenal._typing import array_from_any, item_float, item_int
 from mlx_arsenal.diffusion import (
     block_ranges,
     entropy_bound_transfer,
@@ -340,6 +340,32 @@ class TestEntropyBoundTransfer:
             entropy_bound_transfer(ent, cand, -0.1)
         with pytest.raises(ValueError, match="bool"):
             entropy_bound_transfer(ent, cand.astype(mx.float32), 0.1)
+
+
+class TestNonFiniteScores:
+    # Candidates with +-inf / NaN scores must never be outranked by non-candidates.
+    NEG_INF, INF, NAN = float("-inf"), float("inf"), float("nan")
+
+    def test_topk_commits_all_candidates_with_neg_inf_score(self):
+        conf = mx.array([[0.5, self.NEG_INF, 0.3]])
+        cand = mx.array([[False, True, True]])
+        assert topk_transfer(conf, cand, 2).tolist() == [[False, True, True]]
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("-inf")])
+    def test_threshold_and_factor_still_commit_one(self, bad):
+        conf = mx.array([[0.5, bad, bad]])
+        cand = mx.array([[False, True, True]])
+        assert mx.sum(threshold_transfer(conf, cand, 0.9)).item() == 1
+        assert item_int(mx.sum(factor_transfer(conf, cand, 1.0))) >= 1
+        assert not mx.any(threshold_transfer(conf, cand, 0.9) & ~cand).item()
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_entropy_bound_still_commits_one(self, bad):
+        ent = mx.array([[0.0, bad, bad]])
+        cand = mx.array([[False, True, True]])
+        out = entropy_bound_transfer(ent, cand, 0.0)
+        assert mx.sum(out).item() == 1
+        assert not mx.any(out & ~cand).item()
 
 
 class TestTransferSchedule:

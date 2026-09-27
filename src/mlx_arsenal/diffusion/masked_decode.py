@@ -24,6 +24,7 @@ from collections.abc import Sequence
 from typing import NamedTuple
 
 import mlx.core as mx
+import numpy as np
 
 from .._typing import item_int
 
@@ -115,10 +116,14 @@ def _rank(scores: mx.array, candidates: mx.array, *, descending: bool) -> mx.arr
     """Per-row rank of each candidate by score (0 = first); non-candidates rank last.
 
     Sorting is stable, so equal scores rank by position (lower first).
+    Non-finite candidate scores are clamped to the finite range (NaN ranks
+    last among candidates), so a non-candidate never outranks a candidate.
     """
+    big = float(np.finfo(np.float32).max)
     key = scores.astype(mx.float32)
     if descending:
         key = -key
+    key = mx.nan_to_num(key, nan=big, posinf=big, neginf=-big)
     key = mx.where(candidates, key, float("inf"))
     order = mx.argsort(key, axis=-1)
     return mx.argsort(order, axis=-1)
@@ -237,7 +242,7 @@ def factor_transfer(confidence: mx.array, candidates: mx.array, factor: float) -
     sorted_conf = -mx.sort(-filled, axis=-1)
     i = mx.arange(1, confidence.shape[-1] + 1).astype(mx.float32)
     required = 1.0 - factor / (i + 1.0)
-    admissible = mx.logical_or(sorted_conf >= required, i == 1)
+    admissible = mx.logical_or(sorted_conf >= required, i == 1)  # first always commits
     return _sorted_prefix(confidence, candidates, admissible, descending=True)
 
 
@@ -267,7 +272,9 @@ def entropy_bound_transfer(entropy: mx.array, candidates: mx.array, bound: float
     rank = _rank(entropy, candidates, descending=False)
     sorted_ent = mx.take_along_axis(filled, mx.argsort(rank, axis=-1), axis=-1)
     before = mx.cumsum(sorted_ent, axis=-1) - sorted_ent
-    return _sorted_prefix(entropy, candidates, before <= bound, descending=False)
+    first = mx.arange(entropy.shape[-1]) == 0  # always commits, even with an inf entropy
+    admissible = mx.logical_or(before <= bound, first)
+    return _sorted_prefix(entropy, candidates, admissible, descending=False)
 
 
 def transfer_schedule(num_masked: mx.array, steps: int) -> mx.array:
