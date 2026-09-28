@@ -192,6 +192,8 @@ def decode_uniform(model, *, batch, canvas_len, vocab_size, num_steps=48, entrop
     canvas = uniform_canvas((batch, canvas_len), vocab_size)
     stop = StableConfidentStopping(stability_threshold, confidence_threshold)
     everywhere = mx.ones((batch, canvas_len), dtype=mx.bool_)
+    done = mx.zeros((batch,), dtype=mx.bool_)  # rows that already stopped
+    argmax = canvas
     steps = 0
     for remaining in range(num_steps, 0, -1):
         steps += 1
@@ -199,18 +201,24 @@ def decode_uniform(model, *, batch, canvas_len, vocab_size, num_steps=48, entrop
         stats = token_stats(z)  # argmax canvas and entropy of softmax(z)
         sample = mx.random.categorical(z).astype(mx.int32)
         accepted = entropy_bound_transfer(stats.entropy, everywhere, entropy_bound)
-        canvas = renoise(sample, accepted, uniform_canvas(canvas.shape, vocab_size))
-        if mx.all(stop(stats.x0, stats.entropy)).item():
+        new_canvas = renoise(sample, accepted, uniform_canvas(canvas.shape, vocab_size))
+        # finished rows are frozen, as in the reference
+        argmax = mx.where(done[:, None], argmax, stats.x0)
+        canvas = mx.where(done[:, None], canvas, new_canvas)
+        done = done | stop(argmax, stats.entropy)
+        if mx.all(done).item():
             break
-    return stats.x0, steps
+    return argmax, steps
 ```
 
 The model call hides DiffusionGemma's self-conditioning (the previous
 step's scaled logits are fed back) and its causal encoding of finished
 canvases. Draws use the global PRNG in the reference's order (canvas, then
 per step the sample and the noise), so a loop seeded like a reference
-reproduces its draws. For simplicity the whole batch stops together; the
-reference freezes finished rows individually.
+produces its tokens; the loop draws one extra sample and noise at the last
+step, which leaves the output unchanged but not the PRNG state afterwards.
+A row stops for good once it meets the criterion, and its argmax and canvas
+are frozen while the other rows continue, as in the reference.
 
 ## Model coverage
 

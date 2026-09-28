@@ -205,3 +205,30 @@ class TestRenoiseLoop:
             )
         assert mx.array_equal(runs[0][0], runs[1][0]).item()
         assert runs[0][1] == runs[1][1]
+
+
+class TestRenoiseLoopBatch:
+    V = 50
+
+    def test_rows_finish_independently_and_stay_frozen(self):
+        # Row 0 is confident from step 1 (stops at step 2), then its prediction keeps
+        # flipping; row 1 becomes confident at step 3 (stops at step 4). The loop must
+        # remember row 0's stop, freeze its step-2 argmax, and end at step 4.
+        decode = _load_renoise_loop()
+        V, calls = self.V, [0]
+
+        def sharp(token: int) -> mx.array:
+            return 40.0 * mx.equal(mx.arange(V), token).astype(mx.float32)
+
+        def model(canvas: mx.array) -> mx.array:
+            calls[0] += 1
+            n = calls[0]
+            row0 = sharp(3) if n <= 2 else sharp(10 + n % 2)
+            row1 = mx.zeros((V,)) if n <= 2 else sharp(7)
+            rows = mx.stack([row0, row1])[:, None, :]
+            return mx.broadcast_to(rows, (2, canvas.shape[1], V))
+
+        mx.random.seed(0)
+        out, steps = decode(model, batch=2, canvas_len=4, vocab_size=V)
+        assert steps == 4
+        assert out.tolist() == [[3] * 4, [7] * 4]
