@@ -56,6 +56,27 @@ class TestReferenceParity:
         ref = reference_sea(x, 0.5, 0.5, (2, 3), 2.0)
         np.testing.assert_allclose(np.array(out), ref, atol=1e-4, rtol=1e-4)
 
+    def test_unsorted_axes(self):
+        x = rand((2, 7, 6, 3), seed=5)
+        out = sea_filter(array_from_any(x), 0.6, 0.4, axes=(2, 1))
+        ref = reference_sea(x, 0.6, 0.4, (1, 2), 2.0)
+        np.testing.assert_allclose(np.array(out), ref, atol=1e-4, rtol=1e-4)
+
+    @pytest.mark.parametrize(
+        ("shape", "axes", "ref_axes"),
+        [
+            ((1, 7, 1, 3), None, (1, 2)),  # W = 1 lands in the last filtered position
+            ((1, 1, 6, 8, 3), (2, 3, 1), (1, 2, 3)),  # single-frame video, T ordered last
+            ((1, 1, 1, 2), None, (1, 2)),  # every filtered axis has length 1
+        ],
+    )
+    def test_size_one_axes(self, shape, axes, ref_axes):
+        # MLX 0.32 rfftn is wrong when the last transformed axis has length 1.
+        x = rand(shape, seed=6)
+        out = sea_filter(array_from_any(x), 0.6, 0.4, axes=axes)
+        ref = reference_sea(x, 0.6, 0.4, ref_axes, 2.0)
+        np.testing.assert_allclose(np.array(out), ref, atol=1e-4, rtol=1e-4)
+
 
 class TestBehaviour:
     def test_shape_and_dtype_preserved(self):

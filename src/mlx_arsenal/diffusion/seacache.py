@@ -103,6 +103,12 @@ def sea_filter(
         norm.append(ax % x.ndim)
     if not norm or len(set(norm)) != len(norm):
         raise ValueError(f"axes must be non-empty and unique, got {tuple(axes)}")
+    # A length-1 axis has the normalised gain g(0) / g(0) = 1: skip it. This is
+    # exact, and it avoids MLX 0.32 rfftn being wrong when the last transformed
+    # axis has length 1.
+    norm = [ax for ax in norm if x.shape[ax] > 1]
+    if not norm:
+        return x
 
     gain = mx.array(1.0, dtype=mx.float32)
     mean = 1.0
