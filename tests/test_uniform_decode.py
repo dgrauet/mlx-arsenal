@@ -1,6 +1,9 @@
 """Tests for mlx_arsenal.diffusion.uniform_decode."""
 
 import gc
+import re
+from pathlib import Path
+from typing import Any
 
 import mlx.core as mx
 import pytest
@@ -154,3 +157,51 @@ class TestStableConfidentStopping:
         stop(self._canvas(1, 1), self.LOW)
         with pytest.raises(ValueError, match="shape"):
             stop(mx.zeros((2, 5), dtype=mx.int32), mx.zeros((2, 5)))
+
+
+def _load_renoise_loop() -> Any:
+    note = Path(__file__).parents[1] / "docs" / "research" / "dllm-block-decoding.md"
+    match = re.search(r"<!-- renoise-loop -->\s*```python\n(.*?)```", note.read_text(), re.S)
+    assert match, "renoise loop block not found in the research note"
+    namespace: dict[str, Any] = {}
+    exec(match.group(1), namespace)
+    return namespace["decode_uniform"]
+
+
+class TestRenoiseLoop:
+    V = 50
+
+    def _model(self, sharpness: float):
+        target = mx.arange(8) % self.V  # the "answer" the synthetic model knows
+
+        def model(canvas: mx.array) -> mx.array:
+            onehot = mx.equal(mx.expand_dims(target, -1), mx.arange(self.V)).astype(mx.float32)
+            noise = mx.sin(canvas.astype(mx.float32))[..., None]  # depends on the canvas
+            return mx.broadcast_to(sharpness * onehot, (canvas.shape[0], 8, self.V)) + noise
+
+        return model
+
+    def test_confident_model_stops_early(self):
+        decode = _load_renoise_loop()
+        mx.random.seed(0)
+        out, steps = decode(self._model(40.0), batch=2, canvas_len=8, vocab_size=self.V)
+        assert out.tolist() == [list(range(8))] * 2
+        assert steps == 2  # stable after one repeat, entropy ~0
+
+    def test_uncertain_model_runs_all_steps(self):
+        decode = _load_renoise_loop()
+        mx.random.seed(0)
+        out, steps = decode(self._model(0.0), batch=1, canvas_len=8, vocab_size=self.V, num_steps=6)
+        assert steps == 6
+        assert out.shape == (1, 8)
+
+    def test_deterministic_under_a_seed(self):
+        decode = _load_renoise_loop()
+        runs = []
+        for _ in range(2):
+            mx.random.seed(3)
+            runs.append(
+                decode(self._model(2.0), batch=1, canvas_len=8, vocab_size=self.V, num_steps=5)
+            )
+        assert mx.array_equal(runs[0][0], runs[1][0]).item()
+        assert runs[0][1] == runs[1][1]

@@ -38,6 +38,7 @@ caller.
 | `factor_transfer` | longest prefix with `(i+1)(1 − c_(i)) ≤ f` | Fast-dLLM `get_transfer_index_dynamic` |
 | `entropy_bound_transfer` | longest low-entropy prefix with `Σ_{j<i} H_(j) ≤ γ` | EB-Sampler, DiffusionGemma acceptance |
 | `edit_transfer` | revise committed tokens when `x0 ≠ token` and `p > τ_edit` | LLaDA2.1/2.2 `editing_threshold`, Nemotron-Labs, SGLang JointThreshold |
+| `linear_temperature`, `uniform_canvas`, `renoise`, `StableConfidentStopping` | uniform-noise decoding: temperature schedule, random canvas, re-noising, stable-and-confident stop | Hugging Face `generation_diffusion_gemma.py` |
 | `transfer_schedule` | `(B, steps)` linear quotas | Fast-dLLM / LLaDA `get_num_transfer_tokens` |
 | `block_ranges` | block boundaries, prompt-relative or absolute-aligned | dInfer `BlockIterator` (`start_block_align`) |
 
@@ -160,19 +161,67 @@ def decode_with_editing(model, prompt, *, gen_len, block_len, mask_id, threshold
     return x[:, P : P + gen_len], forwards
 ```
 
+## Uniform-noise decoding (DiffusionGemma)
+
+DiffusionGemma does not use a mask token. A canvas starts as uniformly
+random tokens; at every step the model predicts every position, the
+lowest-entropy predictions are accepted under an entropy budget
+(`entropy_bound_transfer` over all positions — nothing is frozen, accepted
+tokens can change next step), and every other position is re-noised. The
+temperature decays linearly with the number of remaining steps and entropy
+is measured on the temperature-scaled logits; the output is the last argmax
+canvas. The test suite executes this exact block.
+
+<!-- renoise-loop -->
+```python
+import mlx.core as mx
+
+from mlx_arsenal.diffusion import (
+    StableConfidentStopping,
+    entropy_bound_transfer,
+    linear_temperature,
+    renoise,
+    token_stats,
+    uniform_canvas,
+)
+
+
+def decode_uniform(model, *, batch, canvas_len, vocab_size, num_steps=48, entropy_bound=0.1,
+                   t_min=0.4, t_max=0.8, stability_threshold=1, confidence_threshold=0.005):
+    """Decode one canvas: accept low-entropy tokens, re-noise the rest."""
+    canvas = uniform_canvas((batch, canvas_len), vocab_size)
+    stop = StableConfidentStopping(stability_threshold, confidence_threshold)
+    everywhere = mx.ones((batch, canvas_len), dtype=mx.bool_)
+    steps = 0
+    for remaining in range(num_steps, 0, -1):
+        steps += 1
+        z = model(canvas) / linear_temperature(remaining, num_steps, t_min=t_min, t_max=t_max)
+        stats = token_stats(z)  # argmax canvas and entropy of softmax(z)
+        sample = mx.random.categorical(z).astype(mx.int32)
+        accepted = entropy_bound_transfer(stats.entropy, everywhere, entropy_bound)
+        canvas = renoise(sample, accepted, uniform_canvas(canvas.shape, vocab_size))
+        if mx.all(stop(stats.x0, stats.entropy)).item():
+            break
+    return stats.x0, steps
+```
+
+The model call hides DiffusionGemma's self-conditioning (the previous
+step's scaled logits are fed back) and its causal encoding of finished
+canvases. Draws use the global PRNG in the reference's order (canvas, then
+per step the sample and the noise), so a loop seeded like a reference
+reproduces its draws. For simplicity the whole batch stops together; the
+reference freezes finished rows individually.
+
 ## Model coverage
 
-Covered: LLaDA 1.x/1.5, Dream (the caller applies Dream's logit shift),
+Covered: DiffusionGemma (uniform-noise decoding; self-conditioning and the
+encoder cache stay model-side), LLaDA 1.x/1.5, Dream (the caller applies Dream's logit shift),
 LLaDA2.0/2.1 (with token editing), SDAR/TraDo, Nemotron-Labs Diffusion
 (diffusion mode, with token editing), LLaDA-UI, LLaDA2.2 with substitution
 editing but without its DELETE/INSERT edits.
 
 Not covered by v1:
 
-- **DiffusionGemma** decodes differently: uncommitted tokens are re-noised
-  (uniform noise, not a mask token) under a temperature schedule, with
-  self-conditioning. `entropy_bound_transfer` is its acceptance rule, but
-  the renoise step and schedule are not shipped yet.
 - **LLaDA2.2 DELETE/INSERT** edits change the canvas length; only
   substitution editing (`edit_transfer`) is covered.
 
