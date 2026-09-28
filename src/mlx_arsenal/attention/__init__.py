@@ -4,7 +4,14 @@ from mlx_arsenal.attention.compensation import (
     select_probe_rows,
     tile_labels,
 )
-from mlx_arsenal.attention.dynamic_masks import antidiagonal_block_scores, top_p_block_mask
+from mlx_arsenal.attention.dynamic_masks import (
+    antidiagonal_block_scores,
+    block_self_similarity,
+    minmax_block_scores,
+    select_tiling,
+    top_k_block_mask,
+    top_p_block_mask,
+)
 from mlx_arsenal.attention.masks import block_causal_mask, causal_mask, sliding_window_mask
 from mlx_arsenal.attention.permute import (
     block_contiguous_permutation,
@@ -32,6 +39,7 @@ __all__ = [
     "antidiagonal_block_scores",
     "block_causal_mask",
     "block_contiguous_permutation",
+    "block_self_similarity",
     "causal_mask",
     "centroid_compensated_attention",
     "classify",
@@ -39,16 +47,19 @@ __all__ = [
     "classify_heads_from_qk",
     "frame_stride_diagonal_mask",
     "invert_permutation",
+    "minmax_block_scores",
     "probe_residual_correction",
     "radial_box_mask",
     "radial_gaussian_mask",
     "select_probe_rows",
+    "select_tiling",
     "sliding_tile_block_mask",
     "sliding_tile_centered_mask",
     "sliding_window_mask",
     "spatial_only_mask",
     "temporal_only_mask",
     "tile_labels",
+    "top_k_block_mask",
     "top_p_block_mask",
     "vertical_stripe_mask",
 ]
