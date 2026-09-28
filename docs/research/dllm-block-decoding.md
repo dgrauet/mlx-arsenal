@@ -33,7 +33,7 @@ caller.
 | Function | Role | Reference |
 |---|---|---|
 | `token_stats` | `(x0, prob, entropy)` per position, float32, NaN-safe; greedy or Gumbel-max sampling with an explicit key; `suppress_ids` | Fast-dLLM / LLaDA `add_gumbel_noise` + `low_confidence` |
-| `threshold_transfer` | commit `confidence >= τ`, force exactly one if none pass | Fast-dLLM `get_transfer_index`, SGLang LowConfidence |
+| `threshold_transfer` | commit `confidence >= τ` (or `> τ` with `strict=True`), force exactly one if none pass | Fast-dLLM `get_transfer_index`, SGLang LowConfidence, LLaDA2.x `generate` (strict) |
 | `topk_transfer` | commit the `k` most confident, `k` per row | LLaDA / Fast-dLLM fixed quota |
 | `factor_transfer` | longest prefix with `(i+1)(1 − c_(i)) ≤ f` | Fast-dLLM `get_transfer_index_dynamic` |
 | `entropy_bound_transfer` | longest low-entropy prefix with `Σ_{j<i} H_(j) ≤ γ` | EB-Sampler, DiffusionGemma acceptance |
@@ -85,13 +85,27 @@ Swap the commit rule to change the sampler:
   computed at the start of each block.
 - Fast-dLLM factor: `factor_transfer(stats.prob, candidates, factor)`.
 - EB-Sampler: `entropy_bound_transfer(stats.entropy, candidates, gamma)`.
+- LLaDA2.x reference: `threshold_transfer(stats.prob, candidates, 0.95, strict=True)`.
 - Sampling: `token_stats(logits, temperature=t, key=k)` with a fresh key per
   step (`mx.random.split`).
 
-For block-causal models (LLaDA2.x, SDAR, Nemotron-Labs Diffusion) use
-`block_ranges(..., align=True)` and pass
-`block_causal_mask(L, block_len)` to the model; the finished prefix can
-then be cached exactly.
+**Attention layout is model-specific.**
+
+- Block-causal models (LLaDA2.x, SDAR): use `block_ranges(..., align=True)`
+  and `block_causal_mask(L, block_len)` over the window. The LLaDA2.x
+  reference re-runs the full window each step with exactly this mask; a
+  prefix KV cache of the finished blocks is equivalent.
+- Nemotron-Labs Diffusion (`causal_context=True`) is **not** block-causal:
+  its prefix is encoded causally token by token (`causal_mask`, also used to
+  seed each block's first token), and only the current block attends
+  bidirectionally on top of that cache.
+- Bidirectional models (LLaDA 1.x, Dream) attend to the whole canvas.
+
+**Mask conventions.** `mlx_arsenal.attention` masks are additive (`0`
+attend, `-inf` blocked), as `mx.fast.scaled_dot_product_attention` expects.
+Runtimes that take a boolean or 0/1 *keep* mask — mlx-vlm's `mask=`,
+Hugging Face `attention_mask` — read an additive mask inverted, silently;
+pass `block_causal_mask(...) == 0` to them.
 
 ## Model coverage
 
@@ -111,8 +125,11 @@ Not covered by v1:
 
 ## Deviations from the references
 
-- **float32, not float64.** Fast-dLLM computes Gumbel noise and softmax in
-  float64; the MLX GPU has no float64. Near-ties can resolve differently.
+- **Confidence in float32.** References disagree: Fast-dLLM uses float64
+  (unavailable on the MLX GPU), LLaDA2.x casts logits to float32 (as here),
+  and Nemotron-Labs Diffusion softmaxes bfloat16 logits, which creates exact
+  confidence ties that `torch.topk` breaks arbitrarily. float32 keeps the
+  real ordering; near-ties can resolve differently from a given reference.
 - **Ties:** sorting is stable, so equal scores commit the lower position
   first; the forced token of `threshold_transfer` is the first maximal one.
   dInfer forces with `max − 1e-5`, which can commit several near-tied
@@ -123,6 +140,31 @@ Not covered by v1:
   are over the remaining vocabulary (dInfer `rm_mask`).
 - **Per-row quotas.** Dream averages the per-step quota over the batch;
   every function here works per row.
+
+## Validation on real models (2026-09)
+
+A throwaway bench on an M2 Pro (32 GB) challenged the primitives before
+release, with greedy decoding, 3 prompts and 64 generated tokens.
+
+- **Decision parity on the reference's own logits.** The NVIDIA PyTorch
+  `generate` of Nemotron-Labs-Diffusion-3B (bf16, MPS) was hooked, and every
+  denoising step's logits were fed to `token_stats` and the matching rule:
+  over 227 steps, proposed tokens agree 100 %, and committed positions agree
+  on 212. The other 15 are all exact ties in the reference's bfloat16
+  confidence.
+- **End to end, Nemotron-Labs-Diffusion-3B** (MLX bf16 via mlx-vlm's forward
+  vs PyTorch): identical tokens on 2 of 3 prompts. The third diverges at a
+  near-tie (0.327 vs 0.326) because MLX and PyTorch forwards differ by about
+  0.01 in probability there.
+- **End to end, LLaDA2.1-mini 4-bit**: the reference algorithm rebuilt from
+  these primitives (no cache, `block_causal_mask`) matches mlx-vlm's
+  `generate` on 2 of 3 prompts. The third diverges because the 4-bit MoE
+  forward is row-count sensitive: the same 32 tokens run as a batch of 1 or
+  2 differ by up to 6 logits.
+
+Takeaway: end-to-end token equality is a weak test for dLLM samplers, since
+forward numerics flip near-ties. Parity of the commit decisions on fixed
+logits is the meaningful check.
 
 ## Out of scope, and why
 

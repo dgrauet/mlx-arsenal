@@ -47,12 +47,21 @@ def block_causal_mask(
     positions (``position // block_len``). Attention is bidirectional inside
     a block and causal across blocks: the query at absolute position
     ``p = offset + i`` sees key ``j`` iff ``j // block_len <= p // block_len``.
-    This is the mask block-diffusion models (LLaDA2.x, SDAR, Nemotron-Labs
-    Diffusion) are trained with, and it makes a prefix KV cache exact for
-    them. ``block_len=1`` reduces to :func:`causal_mask`.
+    This is the mask block-diffusion models such as LLaDA2.x and SDAR are
+    trained with (LLaDA2.x's reference ``generate`` builds exactly this
+    ``tril`` over blocks), and it makes a prefix KV cache exact for them.
+    ``block_len=1`` reduces to :func:`causal_mask`.
 
-    The prompt is split into blocks like the rest of the sequence. A model
-    that attends to its whole prompt bidirectionally needs its own mask.
+    The prompt is split into blocks like the rest of the sequence. Models
+    with another layout need their own mask: Nemotron-Labs Diffusion, for
+    one, encodes its prefix causally token by token and only the current
+    block bidirectionally.
+
+    The mask is additive (``0`` attend, ``-inf`` blocked), as
+    ``mx.fast.scaled_dot_product_attention`` expects. Runtimes that take a
+    boolean or 0/1 *keep* mask (mlx-vlm's ``mask=``, Hugging Face
+    ``attention_mask``) read it inverted; pass ``block_causal_mask(...) == 0``
+    to them.
 
     Args:
         seq_len: Number of query positions.
