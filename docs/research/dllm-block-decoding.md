@@ -144,27 +144,35 @@ Not covered by v1:
 ## Validation on real models (2026-09)
 
 A throwaway bench on an M2 Pro (32 GB) challenged the primitives before
-release, with greedy decoding, 3 prompts and 64 generated tokens.
+release, with greedy decoding, 3 prompts, 64 generated tokens, and both the
+threshold (0.9) and the top-k schedule samplers.
 
-- **Decision parity on the reference's own logits.** The NVIDIA PyTorch
-  `generate` of Nemotron-Labs-Diffusion-3B (bf16, MPS) was hooked, and every
-  denoising step's logits were fed to `token_stats` and the matching rule:
-  over 227 steps, proposed tokens agree 100 %, and committed positions agree
-  on 212. The other 15 are all exact ties in the reference's bfloat16
-  confidence.
-- **End to end, Nemotron-Labs-Diffusion-3B** (MLX bf16 via mlx-vlm's forward
-  vs PyTorch): identical tokens on 2 of 3 prompts. The third diverges at a
-  near-tie (0.327 vs 0.326) because MLX and PyTorch forwards differ by about
-  0.01 in probability there.
-- **End to end, LLaDA2.1-mini 4-bit**: the reference algorithm rebuilt from
-  these primitives (no cache, `block_causal_mask`) matches mlx-vlm's
-  `generate` on 2 of 3 prompts. The third diverges because the 4-bit MoE
-  forward is row-count sensitive: the same 32 tokens run as a batch of 1 or
-  2 differ by up to 6 logits.
+- **End to end against the reference, float32.** Nemotron-Labs-Diffusion-3B
+  was run with NVIDIA's PyTorch `generate` (MPS) and with its algorithm
+  rebuilt from these primitives on mlx-vlm's MLX forward. The two forwards
+  agree to 9e-5 in logits. All 6 runs produce **identical tokens** with
+  identical forward counts (up to the EOS where the reference stops).
+- **Same forward as mlx-vlm, bfloat16.** Aligning only the caller-side
+  plumbing with mlx-vlm's `generate`, the primitives produce identical
+  tokens on all 9 runs:
+  - Nemotron-3B, with mlx-vlm's bfloat16 confidence passed in as the score;
+  - LLaDA2.1-mini 4-bit, with the same prefix cache and `strict=True`.
+- **Decision parity on the reference's own bfloat16 logits.** At every
+  step of NVIDIA's `generate`, the same logits were fed to `token_stats` and
+  the matching rule. Over 227 steps, proposed tokens agree 100 % and
+  commits agree on 212. The other 15 are exact ties in the reference's
+  bfloat16 confidence, which `torch.topk` breaks arbitrarily.
 
-Takeaway: end-to-end token equality is a weak test for dLLM samplers, since
-forward numerics flip near-ties. Parity of the commit decisions on fixed
-logits is the meaningful check.
+End-to-end runs across frameworks in bfloat16 did diverge on 1 of 3
+prompts for each model. In both cases the cause was forward numerics
+flipping a near-tie (0.327 vs 0.326), not the commit rules:
+
+- For Nemotron, the MLX and PyTorch bfloat16 forwards differ by about 0.01
+  in probability at that step; in float32 the run matches.
+- For LLaDA2.1-mini, the 4-bit MoE forward gives different logits for the
+  same tokens depending on how many rows are processed at once. An
+  uncached window and a prefix cache therefore disagree; with the same
+  cache path the run matches.
 
 ## Out of scope, and why
 
