@@ -116,6 +116,10 @@ def top_p_block_mask(scores: mx.array, threshold: float | mx.array) -> mx.array:
     ``threshold`` may be one value per head, e.g. the per-head table produced
     by an offline calibration such as HEART's EBC.
 
+    Scores must be finite: a NaN makes its row total NaN, and only the forced
+    top-ranked block survives. Validating a ``threshold`` array reads it on
+    the host (one sync per call), negligible next to the attention it gates.
+
     Args:
         scores: ``(B, H, Cq, Ck)`` non-negative block scores, e.g. from
             :func:`antidiagonal_block_scores`.

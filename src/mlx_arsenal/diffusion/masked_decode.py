@@ -207,7 +207,9 @@ def topk_transfer(confidence: mx.array, candidates: mx.array, k: int | mx.array)
     Args:
         confidence: `(B, L)` score, higher commits first.
         candidates: `(B, L)` bool, positions that may be committed.
-        k: Non-negative int, or `(B,)` integer array of per-row counts.
+        k: Non-negative int, or `(B,)` integer array of per-row counts. An
+            array `k` is range-checked on the host (one sync per call),
+            negligible next to the model forward it follows.
 
     Returns:
         `(B, L)` bool, a subset of `candidates`.
@@ -319,7 +321,8 @@ def transfer_schedule(num_masked: mx.array, steps: int) -> mx.array:
 
     Args:
         num_masked: `(B,)` non-negative integer count of masked positions per
-            row (typically in the current block).
+            row (typically in the current block). Range-checked on the host
+            (one sync per call).
         steps: Number of denoising steps, `>= 1`.
 
     Returns:

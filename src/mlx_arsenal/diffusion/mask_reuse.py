@@ -103,7 +103,7 @@ class HeadMaskCache:
 
     Args:
         delta: Drift threshold ``δ >= 0``; a head refreshes when its drift is
-            strictly greater. Raw drift is model-scale dependent (the paper
+            strictly greater, or not finite. Raw drift is model-scale dependent (the paper
             uses 8 or 30); see ``relative``.
         relative: Use :func:`qk_drift` with ``relative=True`` (drift divided
             by the anchor's L1 norm), making ``delta`` scale-free.
@@ -166,7 +166,9 @@ class HeadMaskCache:
                     f"{tuple(self._qbar.shape)}; call reset() for a new configuration"
                 )
             drift = qk_drift(self._qbar, self._kbar, qbar, kbar, relative=self.relative)
-            refresh = drift > self.delta
+            # A non-finite drift (NaN / inf anchor or input) always refreshes,
+            # otherwise a NaN anchor would compare False forever.
+            refresh = mx.logical_or(drift > self.delta, mx.logical_not(mx.isfinite(drift)))
             if self.layer_gate is not None:
                 low, high = self.layer_gate
                 r = mx.mean(refresh.astype(mx.float32), axis=-1, keepdims=True)
@@ -185,6 +187,10 @@ class HeadMaskCache:
 
         Returns:
             The merged mask, same shape and dtype as ``new_mask``.
+
+        If this raises ``ValueError`` (bad ``refresh`` or mask shape), the
+        step stays pending: call ``update`` again with valid arguments, or
+        :meth:`reset`.
         """
         if self._pending is None:
             raise RuntimeError("update called without a pending should_refresh")
