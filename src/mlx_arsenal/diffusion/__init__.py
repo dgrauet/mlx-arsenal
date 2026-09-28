@@ -28,6 +28,7 @@ from .schedulers import (
 )
 from .teacache import TeaCacheController
 from .timestep import TimestepEmbedding, get_timestep_embedding
+from .uniform_decode import linear_temperature, renoise, uniform_canvas
 from .verified_cache import VerifiedFeatureCache, geometric_threshold
 from .window_residual import WindowResidualController
 
@@ -56,11 +57,14 @@ __all__ = [
     "geometric_threshold",
     "get_sampling_sigmas",
     "get_timestep_embedding",
+    "linear_temperature",
     "pooled_qk",
     "qk_drift",
+    "renoise",
     "splice_heads",
     "threshold_transfer",
     "token_stats",
     "topk_transfer",
     "transfer_schedule",
+    "uniform_canvas",
 ]
