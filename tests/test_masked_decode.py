@@ -14,6 +14,7 @@ from mlx_arsenal._typing import array_from_any, item_float, item_int
 from mlx_arsenal.attention import block_causal_mask
 from mlx_arsenal.diffusion import (
     block_ranges,
+    edit_transfer,
     entropy_bound_transfer,
     factor_transfer,
     threshold_transfer,
@@ -414,6 +415,97 @@ class TestNonFiniteScores:
         assert not mx.any(out & ~cand).item()
 
 
+def _llada21_edit_reference(x0, prob, tokens, editable, threshold):
+    """Transcription of LLaDA2.1's edit condition (float64)."""
+    return editable & (prob.astype(np.float64) > threshold) & (x0 != tokens)
+
+
+class TestEditTransfer:
+    def _case(self, seed: int):
+        rng = np.random.default_rng(seed)
+        tokens = rng.integers(0, 6, size=(3, 16)).astype(np.int32)
+        x0 = rng.integers(0, 6, size=(3, 16)).astype(np.int32)
+        prob = rng.random((3, 16)).astype(np.float32)
+        editable = rng.random((3, 16)) < 0.6
+        return x0, prob, tokens, editable
+
+    @pytest.mark.parametrize("threshold", [0.0, 0.5, 0.9, 1.0])
+    def test_matches_llada21_reference(self, threshold):
+        x0, prob, tokens, editable = self._case(40)
+        out = edit_transfer(
+            array_from_any(x0),
+            array_from_any(prob),
+            array_from_any(tokens),
+            array_from_any(editable),
+            threshold,
+        )
+        assert out.dtype == mx.bool_
+        ref = _llada21_edit_reference(x0, prob, tokens, editable, threshold)
+        assert np.array(out).tolist() == ref.tolist()
+
+    def test_unchanged_tokens_are_not_edited(self):
+        t = mx.array([[3, 4, 5]], dtype=mx.int32)
+        out = edit_transfer(
+            t, mx.array([[0.99, 0.99, 0.99]]), t, mx.ones((1, 3), dtype=mx.bool_), 0.5
+        )
+        assert not mx.any(out).item()
+
+    def test_only_editable_positions(self):
+        x0 = mx.array([[1, 1, 1]], dtype=mx.int32)
+        tokens = mx.array([[2, 2, 2]], dtype=mx.int32)
+        editable = mx.array([[True, False, True]])
+        out = edit_transfer(x0, mx.array([[0.99, 0.99, 0.2]]), tokens, editable, 0.5)
+        assert out.tolist() == [[True, False, False]]
+
+    def test_strict_boundary(self):
+        x0 = mx.array([[1]], dtype=mx.int32)
+        tokens = mx.array([[2]], dtype=mx.int32)
+        editable = mx.array([[True]])
+        p = mx.array([[0.9]])
+        assert not edit_transfer(x0, p, tokens, editable, 0.9).item()
+        assert edit_transfer(x0, p, tokens, editable, 0.9, strict=False).item()
+
+    def test_zero_threshold(self):
+        x0 = mx.array([[1, 1]], dtype=mx.int32)
+        tokens = mx.array([[2, 2]], dtype=mx.int32)
+        out = edit_transfer(
+            x0, mx.array([[0.3, 0.0]]), tokens, mx.ones((1, 2), dtype=mx.bool_), 0.0
+        )
+        assert out.tolist() == [[True, False]]
+
+    def test_mixed_int_dtypes(self):
+        x0 = mx.array([[1, 7]], dtype=mx.int32)
+        tokens = mx.array([[1, 8]], dtype=mx.int64)
+        out = edit_transfer(
+            x0, mx.array([[0.99, 0.99]]), tokens, mx.ones((1, 2), dtype=mx.bool_), 0.5
+        )
+        assert out.tolist() == [[False, True]]
+
+    def test_rows_are_independent(self):
+        x0 = mx.array([[1, 1], [1, 1]], dtype=mx.int32)
+        tokens = mx.array([[2, 2], [2, 2]], dtype=mx.int32)
+        editable = mx.array([[True, True], [False, False]])
+        out = edit_transfer(x0, mx.full((2, 2), 0.99), tokens, editable, 0.5)
+        assert out.tolist() == [[True, True], [False, False]]
+
+    def test_validation(self):
+        x0 = mx.zeros((1, 3), dtype=mx.int32)
+        p = mx.zeros((1, 3))
+        e = mx.ones((1, 3), dtype=mx.bool_)
+        with pytest.raises(ValueError, match="rank 2"):
+            edit_transfer(x0[0], p, x0, e, 0.5)
+        with pytest.raises(ValueError, match="shape"):
+            edit_transfer(x0, p[:, :2], x0, e, 0.5)
+        with pytest.raises(ValueError, match="bool"):
+            edit_transfer(x0, p, x0, e.astype(mx.int32), 0.5)
+        with pytest.raises(ValueError, match="integer"):
+            edit_transfer(x0.astype(mx.float32), p, x0, e, 0.5)
+        with pytest.raises(ValueError, match="integer"):
+            edit_transfer(x0, p, x0.astype(mx.float32), e, 0.5)
+        with pytest.raises(ValueError, match="threshold"):
+            edit_transfer(x0, p, x0, e, 1.5)
+
+
 class TestTransferSchedule:
     def test_matches_fastdllm(self):
         num = np.array([0, 1, 7, 32, 33])
@@ -518,3 +610,42 @@ class TestReferenceLoop:
             assert forwards == n_blocks  # everything commits in one step per block
         if threshold == 1.0:
             assert forwards == 12  # one forced commit per step
+
+
+def _load_editing_loop() -> Any:
+    note = Path(__file__).parents[1] / "docs" / "research" / "dllm-block-decoding.md"
+    match = re.search(r"<!-- editing-loop -->\s*```python\n(.*?)```", note.read_text(), re.S)
+    assert match, "editing loop block not found in the research note"
+    namespace: dict[str, Any] = {}
+    exec(match.group(1), namespace)
+    return namespace["decode_with_editing"]
+
+
+class TestEditingLoop:
+    V, MASK = 40, 39
+
+    def test_decodes_and_keeps_the_prompt(self):
+        decode = _load_editing_loop()
+        prompt = mx.array([[1, 2, 3], [4, 5, 6]], dtype=mx.int32)
+        model = TestReferenceLoop()._model(3)
+        out, forwards = decode(model, prompt, gen_len=12, block_len=4, mask_id=self.MASK)
+        assert out.shape == (2, 12)
+        assert not mx.any(out == self.MASK).item()
+        assert forwards >= len(block_ranges(3, 13, 4, align=True))
+
+    def test_loop_respects_max_post_steps(self):
+        # A model that always predicts `token + 1` with certainty: every committed
+        # token is edited on every pass, so each block runs 1 + max_post_steps passes.
+        decode = _load_editing_loop()
+        V = self.V
+
+        def flipping(x: mx.array) -> mx.array:
+            onehot = mx.equal(mx.expand_dims((x + 1) % V, -1), mx.arange(V))
+            return mx.where(onehot, 50.0, -50.0)
+
+        prompt = mx.array([[1, 2, 3, 4]], dtype=mx.int32)  # one full prompt block
+        out, forwards = decode(
+            flipping, prompt, gen_len=8, block_len=4, mask_id=self.MASK, max_post_steps=3
+        )
+        assert forwards == 2 * (1 + 3)  # two generated blocks
+        assert not mx.any(out == self.MASK).item()

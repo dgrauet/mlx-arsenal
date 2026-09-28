@@ -37,6 +37,7 @@ caller.
 | `topk_transfer` | commit the `k` most confident, `k` per row | LLaDA / Fast-dLLM fixed quota |
 | `factor_transfer` | longest prefix with `(i+1)(1 − c_(i)) ≤ f` | Fast-dLLM `get_transfer_index_dynamic` |
 | `entropy_bound_transfer` | longest low-entropy prefix with `Σ_{j<i} H_(j) ≤ γ` | EB-Sampler, DiffusionGemma acceptance |
+| `edit_transfer` | revise committed tokens when `x0 ≠ token` and `p > τ_edit` | LLaDA2.1/2.2 `editing_threshold`, Nemotron-Labs, SGLang JointThreshold |
 | `transfer_schedule` | `(B, steps)` linear quotas | Fast-dLLM / LLaDA `get_num_transfer_tokens` |
 | `block_ranges` | block boundaries, prompt-relative or absolute-aligned | dInfer `BlockIterator` (`start_block_align`) |
 
@@ -107,11 +108,64 @@ Runtimes that take a boolean or 0/1 *keep* mask — mlx-vlm's `mask=`,
 Hugging Face `attention_mask` — read an additive mask inverted, silently;
 pass `block_causal_mask(...) == 0` to them.
 
+## Token editing (LLaDA2.1)
+
+LLaDA2.1/2.2 and Nemotron-Labs Diffusion also revise committed tokens: after
+the mask commit, a committed position outside the prompt takes the new
+prediction when it differs and its confidence exceeds `editing_threshold`.
+A block ends when it has no mask and no edit happened, or after
+`max_post_steps` extra passes once it is full. This is the LLaDA2.1
+reference loop minus its `eos_early_stop` option and final cut at the first
+EOS (it re-runs the window each step with `block_causal_mask`, which is the
+model's job here). Like the reference, it is written for batch 1: with
+`B > 1` the rows share the loop's termination, so a finished row keeps
+receiving edit passes while another row still has masks. The test suite
+executes this exact block.
+
+<!-- editing-loop -->
+```python
+import mlx.core as mx
+
+from mlx_arsenal.diffusion import block_ranges, edit_transfer, threshold_transfer, token_stats
+
+
+def decode_with_editing(model, prompt, *, gen_len, block_len, mask_id, threshold=0.95,
+                        editing_threshold=0.9, max_post_steps=16):
+    """LLaDA2.1-style block decoding with token-to-token editing."""
+    B, P = prompt.shape
+    total = -(-(P + gen_len) // block_len) * block_len  # whole blocks
+    x = mx.concatenate([prompt, mx.full((B, total - P), mask_id, dtype=prompt.dtype)], axis=1)
+    positions = mx.arange(total)
+    forwards = 0
+    for start, end in block_ranges(P, total - P, block_len, align=True):
+        in_block = ((positions >= start) & (positions < end) & (positions >= P))[:end]
+        post_steps = 0
+        while True:
+            window = x[:, :end]
+            masked = (window == mask_id) & in_block
+            has_mask = mx.any(masked).item()
+            if not has_mask:
+                post_steps += 1
+                if post_steps > max_post_steps:
+                    break
+            stats = token_stats(model(window))  # caller: block_causal_mask(end, block_len)
+            forwards += 1
+            commit = threshold_transfer(stats.prob, masked, threshold, strict=True)
+            editable = in_block & ~masked
+            edit = edit_transfer(stats.x0, stats.prob, window, editable, editing_threshold)
+            window = mx.where(commit | edit, stats.x0.astype(x.dtype), window)
+            x = mx.concatenate([window, x[:, end:]], axis=1)
+            if not has_mask and not mx.any(edit).item():
+                break
+    return x[:, P : P + gen_len], forwards
+```
+
 ## Model coverage
 
 Covered: LLaDA 1.x/1.5, Dream (the caller applies Dream's logit shift),
-LLaDA2.0/2.1, SDAR/TraDo, Nemotron-Labs Diffusion (diffusion mode),
-LLaDA-UI, LLaDA2.2 without its DELETE/INSERT edits.
+LLaDA2.0/2.1 (with token editing), SDAR/TraDo, Nemotron-Labs Diffusion
+(diffusion mode, with token editing), LLaDA-UI, LLaDA2.2 with substitution
+editing but without its DELETE/INSERT edits.
 
 Not covered by v1:
 
@@ -119,9 +173,8 @@ Not covered by v1:
   (uniform noise, not a mask token) under a temperature schedule, with
   self-conditioning. `entropy_bound_transfer` is its acceptance rule, but
   the renoise step and schedule are not shipped yet.
-- **Token editing** (LLaDA2.1/2.2 `editing_threshold`, Nemotron-Labs,
-  SGLang JointThreshold) re-opens committed tokens; LLaDA2.2's
-  DELETE/INSERT also changes the canvas length.
+- **LLaDA2.2 DELETE/INSERT** edits change the canvas length; only
+  substitution editing (`edit_transfer`) is covered.
 
 ## Deviations from the references
 
