@@ -1,5 +1,6 @@
 """Diffusion primitives: timestep embeddings, schedulers, samplers, caching."""
 
+from .adaptive_steps import CurvatureAdaptiveStepper
 from .attention_cache import PerHeadAttentionCache, PerLayerAttentionCache, splice_heads
 from .cfg_skip import (
     CFGSimilarityProfiler,
@@ -39,6 +40,7 @@ from .verified_cache import VerifiedFeatureCache, geometric_threshold
 from .window_residual import WindowResidualController
 
 __all__ = [
+    "CurvatureAdaptiveStepper",
     "CFGSimilarityProfiler",
     "CFGSkipController",
     "DDIMScheduler",
