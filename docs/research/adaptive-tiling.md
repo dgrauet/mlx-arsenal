@@ -64,6 +64,8 @@ from mlx_arsenal.attention import (
 
 def spade_attention(q, k, v, grid, tiles, *, budget=0.17):
     """Per-head adaptive tiling, min/max block estimate, top-k budget, compensated attention."""
+    if q.shape[0] != 1:
+        raise ValueError("this recipe is written for batch 1 (tilings are chosen per batch row)")
     T, H, W = grid
     choice = select_tiling(q, grid, tiles)[0].tolist()  # one tiling index per head
     out = mx.zeros((*q.shape[:3], v.shape[-1]), dtype=q.dtype)
@@ -76,7 +78,7 @@ def spade_attention(q, k, v, grid, tiles, *, budget=0.17):
         qg, kg, vg = (mx.take(mx.take(x, idx, axis=1), order, axis=2) for x in (q, k, v))
         block = tile[0] * tile[1] * tile[2]
         scores = minmax_block_scores(qg, kg, block_size=block)
-        mask = top_k_block_mask(scores, max(1, round(budget * scores.shape[-1])))
+        mask = top_k_block_mask(scores, max(1, int(budget * scores.shape[-1])))  # floor, as SPADE
         labels = mx.arange(qg.shape[2]) // block
         og = centroid_compensated_attention(
             qg, kg, vg, q_labels=labels, k_labels=labels, block_mask=mask
@@ -88,7 +90,9 @@ def spade_attention(q, k, v, grid, tiles, *, budget=0.17):
 To drop skipped blocks instead of compensating them, expand the block mask
 to tokens (`mx.repeat` on both axes by `block`) and call
 `mx.fast.scaled_dot_product_attention`. SPADE also always keeps a few sink
-key blocks and a diagonal band: OR them into the block mask.
+key blocks and a diagonal band (its Wan configs: `fixed_sink_width=5`,
+`fixed_diag_width=40`): OR them into the block mask — top-k alone at 17 % is
+not the same mask as SPADE's.
 
 ## Dense by design
 
@@ -100,21 +104,28 @@ in quality against a fixed tile shape.
 
 ## Deviations and notes
 
-- **Mean, not sum.** The paper aggregates per-block SICS by sum; the released
-  torch reference averages cosines (`_block_summarize`), which
-  `block_self_similarity` follows. With equal tile sizes the argmax in
-  `select_tiling` is the same either way.
-- **Zero-norm tokens** (padding) are excluded from the cohesion, as in the
-  reference.
+- **Selection statistic.** SPADE's engine picks tilings with its CUDA
+  `cossim` kernel, which pools pairwise similarities over the whole tiling
+  (Σ pair similarities / Σ pairs) and counts every token, including
+  zero-norm ones. `select_tiling` averages per-tile mean cosines
+  (`block_self_similarity`, like SPADE's torch `_block_summarize`) and
+  excludes zero-norm tokens. With tiles of equal volume across candidates
+  (every SPADE candidate is 64 tokens) and no padding, both pick the same
+  tiling; the paper's "sum of SICS" is then also equivalent.
+- **Divisible grids only.** Every candidate tile must divide the latent
+  grid. SPADE's kernel allows partial edge tiles, and real grids often do
+  not divide evenly — Wan's `16×45×80` rejects its own `(1, 4, 16)` and
+  `(1, 8, 8)` candidates. Pad the grid to a multiple of the tiles with
+  zero tokens (excluded from the cohesion) and mask the padded keys.
 - **Batch**: `select_tiling` decides per (batch, head); the recipe is
-  written for batch 1.
+  written for batch 1 and rejects larger batches.
 
 ## Out of scope, and why
 
 - **Candidate tilings, budgets, warm-up schedule, start layer**: per-model
   constants, the caller's choice.
-- **Static sink / diagonal blocks**: trivial to OR in; their exact semantics
-  in the reference are lightly specified.
+- **Static sink / diagonal blocks**: a caller-side OR (widths are
+  per-model config values, see the recipe note).
 - **Intra-block filter**: disabled in the released configurations.
 - **The policy function / engine**: an orchestrator (the `*Runner` pattern
   the doctrine excludes).

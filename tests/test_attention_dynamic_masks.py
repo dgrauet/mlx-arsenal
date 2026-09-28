@@ -406,3 +406,11 @@ class TestSpadeRecipe:
         out = spade(q, k, k, self.GRID, self.TILES, budget=0.25)
         assert out.shape == (1, 2, 64, 8)
         assert mx.all(mx.isfinite(out)).item()
+
+    def test_recipe_rejects_batches(self):
+        # select_tiling decides per (batch, head); the recipe is batch-1 and must
+        # not silently apply batch 0's choice to every batch.
+        spade = _load_spade_recipe()
+        q, k = _qk(2, 2, 64, 64, 8, 53)
+        with pytest.raises(ValueError, match="batch"):
+            spade(q, k, k, self.GRID, self.TILES)

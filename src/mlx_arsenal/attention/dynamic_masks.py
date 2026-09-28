@@ -11,7 +11,13 @@ written from the paper's description:
 2. :func:`top_p_block_mask` — per query block, keep the smallest set of key
    blocks covering a fraction ``τ`` of the mass; ``τ`` may be per head.
 
-The output is a block-level additive mask, consumable as ``block_mask`` by
+SPADE (Liu et al., arXiv 2608.03335) adds input-adaptive blocking:
+:func:`block_self_similarity` (query cohesion per block),
+:func:`select_tiling` (per-head choice among candidate 3D tilings),
+:func:`minmax_block_scores` (min/max block summaries) and
+:func:`top_k_block_mask` (fixed per-row budget).
+
+The masks are block-level and additive, consumable as ``block_mask`` by
 :func:`~mlx_arsenal.attention.centroid_compensated_attention` with
 ``labels = mx.arange(N) // block_size``. For reuse across denoising steps
 see :class:`mlx_arsenal.diffusion.HeadMaskCache`.
