@@ -214,6 +214,10 @@ class HeadMaskCache:
         sel_d = mx.expand_dims(refresh, -1)
         self._qbar = qbar if self._qbar is None else mx.where(sel_d, qbar, self._qbar)
         self._kbar = kbar if self._kbar is None else mx.where(sel_d, kbar, self._kbar)
+        # Materialize the (B, H, D) anchors: left lazy they would keep this
+        # step's full q/k alive (the first-step refresh does not depend on
+        # them, so nothing else forces their evaluation).
+        mx.eval(self._qbar, self._kbar)
         self._mask = merged
         self._pending = None
         return merged

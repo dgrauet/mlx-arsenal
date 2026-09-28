@@ -1,5 +1,6 @@
 """Tests for mlx_arsenal.diffusion.mask_reuse."""
 
+import gc
 import re
 from pathlib import Path
 from typing import Any
@@ -143,6 +144,19 @@ class TestHeadMaskCache:
         bump = mx.zeros((1, 4, 1, 1))
         bump[0, :3] = 5.0  # 3/4 = 0.75 > 0.5 -> all four refresh
         assert mx.all(cache.should_refresh(q + bump, k)).item()
+
+    def test_first_step_does_not_pin_q_and_k(self):
+        # The first-step anchors must be materialized: lazily they would keep the
+        # caller's full q/k alive until step 2 (GBs per layer at video sizes).
+        cache = HeadMaskCache(delta=1.0)
+        q = mx.random.normal((1, 4, 8192, 64), key=mx.random.key(0))
+        k = mx.random.normal((1, 4, 8192, 64), key=mx.random.key(1))
+        mx.eval(q, k)
+        mx.eval(cache.update(_masks(1.0, B=1, H=4), cache.should_refresh(q, k)))
+        del q, k
+        gc.collect()
+        mx.clear_cache()
+        assert mx.get_active_memory() < 4 * 8192 * 64 * 4  # well under one q tensor
 
     def test_call_order_is_enforced(self):
         cache = HeadMaskCache(delta=1.0)
