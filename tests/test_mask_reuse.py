@@ -1,5 +1,9 @@
 """Tests for mlx_arsenal.diffusion.mask_reuse."""
 
+import re
+from pathlib import Path
+from typing import Any
+
 import mlx.core as mx
 import numpy as np
 import pytest
@@ -185,3 +189,29 @@ class TestHeadMaskCache:
         for gate in ((0.5, 0.4), (-0.1, 0.5), (0.2, 1.5)):
             with pytest.raises(ValueError, match="layer_gate"):
                 HeadMaskCache(delta=1.0, layer_gate=gate)
+
+
+def _load_recipe() -> Any:
+    note = Path(__file__).parents[1] / "docs" / "research" / "head-mask-reuse.md"
+    match = re.search(r"<!-- reference-recipe -->\s*```python\n(.*?)```", note.read_text(), re.S)
+    assert match, "reference recipe block not found in the research note"
+    namespace: dict[str, Any] = {}
+    exec(match.group(1), namespace)
+    return namespace["sparse_attention"]
+
+
+class TestReferenceRecipe:
+    def test_recipe_reuses_then_refreshes(self):
+        sparse_attention = _load_recipe()
+        q, k = _qk(20, B=1, H=2, N=64, D=8)
+        v = _qk(21, B=1, H=2, N=64, D=8)[0]
+        cache = HeadMaskCache(delta=1.0)
+        out0 = sparse_attention(q, k, v, cache, block_size=16, stride=4, tau=0.9)
+        mask0 = cache.mask
+        out1 = sparse_attention(q, k, v, cache, block_size=16, stride=4, tau=0.9)
+        assert out0.shape == (1, 2, 64, 8)
+        assert mx.all(mx.isfinite(out1)).item()
+        assert mx.array_equal(out0, out1).item()  # identical step: mask reused
+        q2 = q + mx.random.normal(q.shape, key=mx.random.key(0))  # large drift: refresh
+        sparse_attention(q2, k, v, cache, block_size=16, stride=4, tau=0.9)
+        assert cache.mask.shape == mask0.shape
