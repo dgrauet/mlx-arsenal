@@ -1,6 +1,9 @@
 """Tests for mlx_arsenal.attention.dynamic_masks."""
 
 import math
+import re
+from pathlib import Path
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
@@ -364,3 +367,42 @@ class TestTopKBlockMask:
             top_k_block_mask(mx.zeros((2, 3)), 1)
         with pytest.raises(ValueError, match="k"):
             top_k_block_mask(mx.zeros((1, 1, 2, 3)), 0)
+
+
+def _load_spade_recipe() -> Any:
+    note = Path(__file__).parents[1] / "docs" / "research" / "adaptive-tiling.md"
+    match = re.search(r"<!-- spade-recipe -->\s*```python\n(.*?)```", note.read_text(), re.S)
+    assert match, "SPADE recipe block not found in the research note"
+    namespace: dict[str, Any] = {}
+    exec(match.group(1), namespace)
+    return namespace["spade_attention"]
+
+
+class TestSpadeRecipe:
+    GRID, TILES = (2, 4, 8), [(1, 4, 4), (2, 1, 8)]
+
+    def test_full_budget_equals_dense_attention(self):
+        # budget 1.0 keeps every block: the per-group permute / inverse-permute
+        # must then reproduce dense attention exactly.
+        spade = _load_spade_recipe()
+        q, k = _qk(1, 4, 64, 64, 8, 50)
+        v = _qk(1, 4, 64, 64, 8, 51)[0]
+        out = spade(q, k, v, self.GRID, self.TILES, budget=1.0)
+        dense = mx.fast.scaled_dot_product_attention(q, k, v, scale=1.0 / math.sqrt(8))
+        assert mx.allclose(out, dense, atol=1e-5).item()
+
+    def test_sparse_budget_runs_with_mixed_tilings(self):
+        spade = _load_spade_recipe()
+        rng = np.random.default_rng(52)
+        heads = []
+        for tile in self.TILES:  # one spatially and one temporally coherent head
+            labels = np.array(tile_labels(*self.GRID, tile=tile))
+            heads.append(
+                rng.normal(size=(labels.max() + 1, 8))[labels] + 0.05 * rng.normal(size=(64, 8))
+            )
+        q = array_from_any(np.stack(heads)[None].astype(np.float32))
+        assert select_tiling(q, self.GRID, self.TILES).tolist() == [[0, 1]]
+        k = array_from_any(rng.normal(size=(1, 2, 64, 8)).astype(np.float32))
+        out = spade(q, k, k, self.GRID, self.TILES, budget=0.25)
+        assert out.shape == (1, 2, 64, 8)
+        assert mx.all(mx.isfinite(out)).item()
