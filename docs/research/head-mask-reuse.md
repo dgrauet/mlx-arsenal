@@ -96,7 +96,8 @@ block_size, -1)` and pass it to `mx.fast.scaled_dot_product_attention`.
 ## Dense by design
 
 MLX has no block-sparse kernel, so attention itself runs dense. Reusing a
-mask saves only the predictor (`≈ 1/stride²` of `QKᵀ`), not the attention.
+mask saves only the predictor (`≈ 1/stride` of the `QKᵀ` FLOPs), not the
+attention.
 These functions are quality tools and a reference for a future kernel: they
 let a port measure what dynamic sparsity and mask reuse cost in quality.
 
@@ -123,9 +124,14 @@ let a port measure what dynamic sparsity and mask reuse cost in quality.
   caller-built mask works with `HeadMaskCache`.
 - **Causal XAttention options** (sink / recent blocks): not needed for
   bidirectional video DiTs.
-- **Chunked scoring** for very long sequences: one float32
-  `(N/stride)²` matrix per head is fine at video sizes (≈16 MB per head at
-  `N = 32k`, `stride = 16`).
+- **Chunked scoring** inside the function. All `B·H` heads are scored at
+  once, using roughly `2 · B·H · (N/stride)² · 4` bytes of transient memory
+  (≈16 MB per head at `N = 32k`, `stride = 16`, but ≈14 GB for a Wan 720p
+  layer with CFG). Large models should call it per head slice.
+- **Padding.** Sequence lengths must be multiples of `block_size`; real
+  token counts often are not (e.g. 75 600). The caller pads, and
+  zero-padded keys still take softmax mass, as in XAttention's non-causal
+  mode.
 
 ## References
 

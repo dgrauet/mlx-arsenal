@@ -7,7 +7,7 @@ XAttention estimator (Xu et al., arXiv 2503.16428) as dense MLX array math,
 written from the paper's description:
 
 1. :func:`antidiagonal_block_scores` — cheap per-block attention mass
-   estimate from strided anti-diagonal sums (~1/stride² of ``QKᵀ``).
+   estimate from strided anti-diagonal sums (~1/stride of ``QKᵀ`` FLOPs).
 2. :func:`top_p_block_mask` — per query block, keep the smallest set of key
    blocks covering a fraction ``τ`` of the mass; ``τ`` may be per head.
 
@@ -43,11 +43,19 @@ def antidiagonal_block_scores(
     sums to 1. XAttention keeps the raw tile sums; the normalization does not
     change :func:`top_p_block_mask`, which is relative to the row total.
 
-    Cost is about ``1/stride²`` of a full ``QKᵀ``; memory is one float32
-    ``(Nq/stride, Nk/stride)`` matrix per head (≈16 MB per head at
-    ``N = 32k``, ``stride = 16``). Permute tokens first (e.g.
-    :func:`~mlx_arsenal.attention.block_contiguous_permutation`) if blocks
-    should follow another order.
+    The strided matmul costs about ``1/stride`` of a full ``QKᵀ`` in FLOPs;
+    the logits and softmax are ``1/stride²`` of the full attention matrix.
+    All ``B·H`` heads are scored at once: transient memory is roughly
+    ``2 · B·H · (Nq/stride)·(Nk/stride) · 4`` bytes (logits + softmax) —
+    ≈16 MB per head at ``N = 32k``, ``stride = 16``, but ≈14 GB for a Wan
+    720p layer (``N ≈ 75.8k``, ``H = 40``, CFG ``B = 2``). For large models,
+    call it per head slice (``q[:, h0:h1]``) and concatenate.
+
+    Sequence lengths must be multiples of ``block_size``: pad beforehand.
+    Zero-padded keys still take softmax mass (as in XAttention's non-causal
+    mode); mask their blocks out afterwards if that matters. Permute tokens
+    first (e.g. :func:`~mlx_arsenal.attention.block_contiguous_permutation`)
+    if blocks should follow another order.
 
     Args:
         q: ``(B, H, Nq, D)`` queries, ``Nq`` a multiple of ``block_size``.
