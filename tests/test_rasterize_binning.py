@@ -80,14 +80,17 @@ class TestFaceSpans:
 
 
 class TestFloorDivPow2:
-    """Regression coverage for the mx.floor_divide-truncates-negatives bug.
+    """Regression coverage for truncating division on negative numerators.
+
+    Integer ``mx.floor_divide`` truncated toward zero up to MLX 0.32.x
+    (ml-explore/mlx#4515 makes it floor), so the helper uses a shift instead.
 
     ``face_spans`` clamps every pixel bound to >= 0 before it becomes visible
     through the public API, so a regression here cannot be observed through
     ``face_spans`` itself (both a correct floor and a zero-toward truncation
     of a negative numerator clamp to the same 0). These tests pin the exact
     floor semantics on the private helper directly, so a regression to
-    ``mx.floor_divide`` on a possibly-negative numerator fails immediately.
+    truncating division on a possibly-negative numerator fails immediately.
     """
 
     def test_matches_python_floor_division_for_negative_numerators(self):
@@ -97,12 +100,12 @@ class TestFloorDivPow2:
         expected = [v // 16 for v in xs]
         assert [item_int(result[i]) for i in range(len(xs))] == expected
 
-    def test_would_disagree_with_naive_floor_divide(self):
-        # mx.floor_divide(-15, 16) truncates to 0; floor(-15 / 16) is -1.
-        # This is exactly the case a regression back to mx.floor_divide breaks.
+    def test_floors_where_truncation_would_not(self):
+        # Truncating -15 / 16 gives 0; floor(-15 / 16) is -1. This is exactly
+        # the case a regression to truncating division breaks. MLX's own
+        # floor_divide result is not asserted: it changes with mlx#4515.
         x = mx.array([-15], dtype=mx.int32)
         assert item_int(_floor_div_pow2(x, bits=4)[0]) == -1
-        assert item_int(mx.floor_divide(x, 16)[0]) == 0
 
 
 class TestShiftAmount:

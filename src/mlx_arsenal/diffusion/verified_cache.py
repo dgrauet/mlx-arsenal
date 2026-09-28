@@ -169,8 +169,12 @@ class VerifiedFeatureCache:
 
         Uses squared relative-L2 to match the SpeCa formulation:
         ``e = ‖predicted − actual‖²₂ / (‖actual‖²₂ + ε)``.
-        Returns ``True`` if ``e <= threshold(step_index)``.
+        Returns ``True`` if ``e <= threshold(step_index)``. A draft whose
+        shape differs from ``actual`` (the feature changed shape since the
+        anchors were recorded) is always rejected.
         """
+        if predicted.shape != actual.shape:
+            return False
         diff_sq = item_float(mx.sum((predicted - actual) ** 2))
         actual_sq = item_float(mx.sum(actual**2))
         error = diff_sq / (actual_sq + self.epsilon)
@@ -181,12 +185,17 @@ class VerifiedFeatureCache:
 
         Anchors are stored in a fixed-capacity FIFO of size ``order + 1``.
         ``step_index`` must be strictly greater than the last recorded
-        step (anchors are monotonic by construction).
+        step (anchors are monotonic by construction). A ``feature`` whose
+        shape differs from the previous anchors (e.g. a sequence that grew)
+        drops them first: forecasting restarts from this single anchor.
         """
         if self._anchor_steps and step_index <= self._anchor_steps[-1]:
             raise ValueError(
                 f"step_index {step_index} is not strictly greater than the last "
                 f"recorded anchor at step {self._anchor_steps[-1]}."
             )
+        if self._anchor_values and feature.shape != self._anchor_values[-1].shape:
+            self._anchor_steps.clear()
+            self._anchor_values.clear()
         self._anchor_steps.append(step_index)
         self._anchor_values.append(feature)

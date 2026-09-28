@@ -164,3 +164,66 @@ class TestConstructorAndStepValidation:
             c.should_compute(4, x)
         with pytest.raises(ValueError):
             c.should_compute(-1, x)
+
+
+class TestMaxConsecutiveSkips:
+    """Cap on back-to-back skips (SeaCache / cache-dit pattern)."""
+
+    @staticmethod
+    def tiny(step):
+        # Rescaled per-step delta ≈ 2e-4, far below the threshold: skips forever uncapped.
+        return mx.full((4,), 1.0001**step)
+
+    def make(self, cap, num_steps=20):
+        return TeaCacheController(
+            num_steps=num_steps,
+            rel_l1_thresh=0.1,
+            coefficients=LINEAR_COEFFS,
+            max_consecutive_skips=cap,
+        )
+
+    def test_uncapped_by_default(self):
+        c = make_controller(num_steps=20)
+        c.should_compute(0, self.tiny(0))
+        assert [c.should_compute(s, self.tiny(s)) for s in range(1, 8)] == [False] * 7
+
+    def test_cap_forces_compute_after_n_skips(self):
+        c = self.make(2)
+        c.should_compute(0, self.tiny(0))
+        got = [c.should_compute(s, self.tiny(s)) for s in range(1, 10)]
+        assert got == [False, False, True, False, False, True, False, False, True]
+
+    def test_counter_restarts_after_threshold_compute(self):
+        # A compute triggered by the threshold (not by the cap) must also restart
+        # the count, so the next forced compute comes a full `cap` skips later.
+        c = self.make(2)
+        c.should_compute(0, mx.full((4,), 1.0))
+        assert c.should_compute(1, mx.full((4,), 1.0001)) is False
+        assert c.should_compute(2, mx.full((4,), 5.0)) is True  # threshold hit
+        assert c.should_compute(3, mx.full((4,), 5.0005)) is False
+        assert c.should_compute(4, mx.full((4,), 5.001)) is False
+        assert c.should_compute(5, mx.full((4,), 5.0015)) is True  # cap
+
+    def test_forced_compute_resets_accumulator(self):
+        # Rescaled delta 0.04 per step with thresh 0.1: uncapped, step 3 computes.
+        # Capped at 1, step 2 is forced; the accumulator restarts, so step 3 skips.
+        c = self.make(1)
+        c.should_compute(0, mx.full((4,), 1.0))
+        assert c.should_compute(1, mx.full((4,), 1.02)) is False
+        assert c.should_compute(2, mx.full((4,), 1.0404)) is True
+        assert c.should_compute(3, mx.full((4,), 1.061208)) is False
+
+    def test_reset_clears_counter(self):
+        c = self.make(2)
+        c.should_compute(0, self.tiny(0))
+        c.should_compute(1, self.tiny(1))
+        c.should_compute(2, self.tiny(2))
+        c.reset()
+        c.should_compute(0, self.tiny(0))
+        assert c.should_compute(1, self.tiny(1)) is False
+        assert c.should_compute(2, self.tiny(2)) is False
+
+    @pytest.mark.parametrize("cap", [0, -1])
+    def test_nonpositive_cap_raises(self, cap):
+        with pytest.raises(ValueError, match="max_consecutive_skips"):
+            self.make(cap)
