@@ -3,7 +3,7 @@
 import math
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import mlx.core as mx
 import numpy as np
@@ -406,6 +406,27 @@ class TestSpadeRecipe:
         out = spade(q, k, k, self.GRID, self.TILES, budget=0.25)
         assert out.shape == (1, 2, 64, 8)
         assert mx.all(mx.isfinite(out)).item()
+        # Independent per-head reference (no grouping): each head with its own
+        # tiling, min/max estimate, top-k budget and compensated attention.
+        choice = cast(list[int], select_tiling(q, self.GRID, self.TILES)[0].tolist())
+        for h, pick in enumerate(choice):
+            tile = self.TILES[pick]
+            order = mx.argsort(tile_labels(*self.GRID, tile=tile))
+            qh, kh = (mx.take(x[:, h : h + 1], order, axis=2) for x in (q, k))
+            block = tile[0] * tile[1] * tile[2]
+            scores = minmax_block_scores(qh, kh, block_size=block)
+            mask = top_k_block_mask(scores, max(1, int(0.25 * scores.shape[-1])))
+            labels = mx.arange(64) // block
+            ref = centroid_compensated_attention(
+                qh, kh, kh, q_labels=labels, k_labels=labels, block_mask=mask
+            )
+            ref = mx.take(ref, mx.argsort(order), axis=2)
+            assert mx.allclose(out[:, h : h + 1], ref, atol=1e-5).item()
+            # the sparse mask actually changes the result vs dense attention
+            dense = mx.fast.scaled_dot_product_attention(
+                q[:, h : h + 1], k[:, h : h + 1], k[:, h : h + 1], scale=1.0 / math.sqrt(8)
+            )
+            assert not mx.allclose(out[:, h : h + 1], dense, atol=1e-3).item()
 
     def test_recipe_rejects_batches(self):
         # select_tiling decides per (batch, head); the recipe is batch-1 and must
