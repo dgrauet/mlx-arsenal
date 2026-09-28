@@ -58,8 +58,10 @@ def qk_drift(
     drift scale-free — an extension, not part of the paper.
 
     Args:
-        qbar_a, kbar_a: ``(B, H, D)`` reference (anchor) summaries.
-        qbar_b, kbar_b: ``(B, H, D)`` current summaries.
+        qbar_a: ``(B, H, D)`` reference (anchor) query summary.
+        kbar_a: ``(B, H, D)`` reference (anchor) key summary.
+        qbar_b: ``(B, H, D)`` current query summary.
+        kbar_b: ``(B, H, D)`` current key summary.
         relative: Normalize by the reference summary's L1 norm.
 
     Returns:
