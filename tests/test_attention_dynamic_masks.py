@@ -143,6 +143,14 @@ class TestTopPBlockMask:
         kept_mass = mx.sum(mx.where(out == 0.0, scores, 0.0), axis=-1)
         assert mx.all(kept_mass >= 0.8 - 1e-6).item()
 
+    def test_tie_policy_holds_at_scale(self):
+        # Equal scores keep the lower key block first (stable argsort), also on long rows.
+        Ck = 4096
+        scores = mx.full((1, 1, 1, Ck), 1.0 / Ck)
+        keep = np.array(top_p_block_mask(scores, 0.1))[0, 0, 0] == 0.0
+        n = int(np.ceil(0.1 * Ck))  # blocks needed to reach 10 % of the mass
+        assert np.flatnonzero(keep).tolist() == list(range(n))
+
     def test_zero_row_keeps_one(self):
         scores = mx.zeros((1, 1, 2, 4))
         out = top_p_block_mask(scores, 0.9)

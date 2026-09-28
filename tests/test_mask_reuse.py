@@ -158,6 +158,17 @@ class TestHeadMaskCache:
         mx.clear_cache()
         assert mx.get_active_memory() < 4 * 8192 * 64 * 4  # well under one q tensor
 
+    def test_non_finite_drift_forces_refresh(self):
+        # A NaN anchor would otherwise compare `drift > delta` as False forever.
+        cache = HeadMaskCache(delta=1.0)
+        q, k = _qk(11)
+        bad = mx.concatenate([q[:, :1] * float("nan"), q[:, 1:]], axis=1)
+        cache.update(_masks(1.0), cache.should_refresh(bad, k))
+        refresh = cache.should_refresh(q, k)
+        assert refresh.tolist() == [[True, False, False], [True, False, False]]
+        cache.update(_masks(2.0), refresh)
+        assert not mx.any(cache.should_refresh(q, k)).item()  # anchor healed
+
     def test_call_order_is_enforced(self):
         cache = HeadMaskCache(delta=1.0)
         q, k = _qk(7)
@@ -205,27 +216,38 @@ class TestHeadMaskCache:
                 HeadMaskCache(delta=1.0, layer_gate=gate)
 
 
-def _load_recipe() -> Any:
+def _load_recipe() -> dict[str, Any]:
     note = Path(__file__).parents[1] / "docs" / "research" / "head-mask-reuse.md"
     match = re.search(r"<!-- reference-recipe -->\s*```python\n(.*?)```", note.read_text(), re.S)
     assert match, "reference recipe block not found in the research note"
     namespace: dict[str, Any] = {}
     exec(match.group(1), namespace)
-    return namespace["sparse_attention"]
+    return namespace
 
 
 class TestReferenceRecipe:
     def test_recipe_reuses_then_refreshes(self):
-        sparse_attention = _load_recipe()
+        ns = _load_recipe()
+        calls = []
+        predictor = ns["antidiagonal_block_scores"]
+
+        def counting(*args: Any, **kwargs: Any) -> mx.array:
+            calls.append(1)
+            return predictor(*args, **kwargs)
+
+        ns["antidiagonal_block_scores"] = counting  # the recipe resolves it from its globals
+        sparse_attention = ns["sparse_attention"]
         q, k = _qk(20, B=1, H=2, N=64, D=8)
         v = _qk(21, B=1, H=2, N=64, D=8)[0]
         cache = HeadMaskCache(delta=1.0)
-        out0 = sparse_attention(q, k, v, cache, block_size=16, stride=4, tau=0.9)
+        out0 = sparse_attention(q, k, v, cache, block_size=16, stride=4, tau=0.5)
         mask0 = cache.mask
-        out1 = sparse_attention(q, k, v, cache, block_size=16, stride=4, tau=0.9)
+        out1 = sparse_attention(q, k, v, cache, block_size=16, stride=4, tau=0.5)
+        assert len(calls) == 1  # identical step: every head reuses, predictor skipped
         assert out0.shape == (1, 2, 64, 8)
-        assert mx.all(mx.isfinite(out1)).item()
-        assert mx.array_equal(out0, out1).item()  # identical step: mask reused
-        q2 = q + mx.random.normal(q.shape, key=mx.random.key(0))  # large drift: refresh
-        sparse_attention(q2, k, v, cache, block_size=16, stride=4, tau=0.9)
-        assert cache.mask.shape == mask0.shape
+        assert mx.array_equal(out0, out1).item()
+        rng = np.random.default_rng(22)
+        q2 = array_from_any(rng.normal(size=(1, 2, 64, 8)).astype(np.float32) * 3)
+        sparse_attention(q2, k, v, cache, block_size=16, stride=4, tau=0.5)
+        assert len(calls) == 2  # large drift: refresh
+        assert not mx.array_equal(cache.mask, mask0).item()

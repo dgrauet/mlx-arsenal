@@ -288,6 +288,19 @@ class TestTopkTransfer:
         out = topk_transfer(conf, cand, mx.array([5, 2]))
         assert out.tolist() == [[True, False, True], [False, False, False]]
 
+    def test_tie_policy_holds_at_scale(self):
+        # The documented tie policy (lower position first) relies on MLX argsort
+        # being stable, which the API does not promise: pin it on a long row.
+        L = 4096
+        rng = np.random.default_rng(30)
+        conf = array_from_any(rng.choice([0.2, 0.5, 0.9], size=(2, L)).astype(np.float32))
+        cand = mx.ones((2, L), dtype=mx.bool_)
+        out = np.array(topk_transfer(conf, cand, 300))
+        for row in range(2):
+            c = np.array(conf)[row]
+            expected = np.argsort(-c, kind="stable")[:300]
+            assert np.flatnonzero(out[row]).tolist() == sorted(expected.tolist())
+
     def test_per_row_k_is_not_averaged(self):
         # Dream averages the quota over the batch; each row must get its own k.
         conf = mx.array([[0.1, 0.2, 0.3, 0.4]] * 2)
