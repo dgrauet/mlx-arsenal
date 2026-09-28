@@ -1,12 +1,15 @@
 """Tests for the CAT-Flow curvature-adaptive step controller."""
 
 import math
+import re
+from pathlib import Path
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
 import pytest
 
-from mlx_arsenal._typing import array_from_any
+from mlx_arsenal._typing import array_from_any, item_float
 from mlx_arsenal.diffusion import CurvatureAdaptiveStepper
 
 
@@ -190,3 +193,44 @@ class TestValidation:
     def test_scalar_velocity_raises(self):
         with pytest.raises(ValueError):
             CurvatureAdaptiveStepper(1.0).step(mx.array(1.0))
+
+
+def _load_recipe():
+    note = Path(__file__).parent.parent / "docs" / "research" / "adaptive-flow-steps.md"
+    match = re.search(
+        r"<!-- adaptive-steps-recipe -->\s*```python\n(.*?)```", note.read_text(), re.S
+    )
+    assert match, "adaptive-steps recipe block not found in the research note"
+    namespace: dict[str, Any] = {}
+    exec(match.group(1), namespace)
+    return namespace["adaptive_euler"]
+
+
+class TestRecipeOnGaussianFlow:
+    """Data N(mu, s^2 I), x_sigma = (1 - sigma) x0 + sigma eps, diffusers velocity eps - x0.
+
+    The marginal velocity is closed-form and the ODE maps the start noise z to
+    mu + s z exactly, so the sampler's error is measurable.
+    """
+
+    MU, S = 2.0, 0.5
+
+    def velocity(self, x, sigma):
+        var = (1 - sigma) ** 2 * self.S**2 + sigma**2
+        centred = x - (1 - sigma) * self.MU
+        e_eps = sigma / var * centred
+        e_x0 = self.MU + (1 - sigma) * self.S**2 / var * centred
+        return e_eps - e_x0
+
+    def test_converges_as_scale_decreases(self):
+        adaptive_euler = _load_recipe()
+        z = mx.array(np.random.default_rng(3).standard_normal((1, 16, 16, 4)).astype(np.float32))
+        exact = self.MU + self.S * z
+        errors, nfes = [], []
+        for lam in (0.2, 0.02):  # OV: about 10 and 28 steps
+            out, nfe = adaptive_euler(self.velocity, z, CurvatureAdaptiveStepper(lam))
+            errors.append(item_float(mx.abs(out - exact).max()))
+            nfes.append(nfe)
+        assert nfes[0] < nfes[1] < 100  # smaller lambda, more steps
+        assert errors[1] < errors[0] < 0.5  # and a smaller error
+        assert errors[1] < 0.15
