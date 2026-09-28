@@ -424,6 +424,8 @@ def edit_transfer(
         raise ValueError(
             f"x0 and tokens must have integer dtypes, got {x0.dtype} and {tokens.dtype}"
         )
+    if not mx.issubdtype(prob.dtype, mx.floating):
+        raise ValueError(f"prob must have a floating dtype, got {prob.dtype}")
     if not 0.0 <= threshold <= 1.0:
         raise ValueError(f"threshold must be in [0, 1], got {threshold}")
     p = prob.astype(mx.float32)

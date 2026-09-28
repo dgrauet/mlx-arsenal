@@ -504,6 +504,8 @@ class TestEditTransfer:
             edit_transfer(x0, p, x0.astype(mx.float32), e, 0.5)
         with pytest.raises(ValueError, match="threshold"):
             edit_transfer(x0, p, x0, e, 1.5)
+        with pytest.raises(ValueError, match="floating"):
+            edit_transfer(x0, p.astype(mx.int32), x0, e, 0.5)
 
 
 class TestTransferSchedule:
@@ -649,3 +651,20 @@ class TestEditingLoop:
         )
         assert forwards == 2 * (1 + 3)  # two generated blocks
         assert not mx.any(out == self.MASK).item()
+
+    def test_prompt_tail_is_never_edited(self):
+        # The prompt ends inside the first generated block (P=3, block 4): its tail
+        # shares a block with generated tokens but must never be edited.
+        decode = _load_editing_loop()
+        V = self.V
+        prompt = mx.array([[5, 6, 7]], dtype=mx.int32)
+        seen = []
+
+        def flipping(x: mx.array) -> mx.array:
+            seen.append(x)
+            onehot = mx.equal(mx.expand_dims((x + 1) % V, -1), mx.arange(V))
+            return mx.where(onehot, 50.0, -50.0)
+
+        decode(flipping, prompt, gen_len=9, block_len=4, mask_id=self.MASK, max_post_steps=2)
+        assert seen
+        assert all(w[:, :3].tolist() == [[5, 6, 7]] for w in seen)
