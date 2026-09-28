@@ -169,8 +169,12 @@ class VerifiedFeatureCache:
 
         Uses squared relative-L2 to match the SpeCa formulation:
         ``e = ‖predicted − actual‖²₂ / (‖actual‖²₂ + ε)``.
-        Returns ``True`` if ``e <= threshold(step_index)``.
+        Returns ``True`` if ``e <= threshold(step_index)``. A draft whose
+        shape differs from ``actual`` (the feature changed shape since the
+        anchors were recorded) is always rejected.
         """
+        if predicted.shape != actual.shape:
+            return False
         diff_sq = item_float(mx.sum((predicted - actual) ** 2))
         actual_sq = item_float(mx.sum(actual**2))
         error = diff_sq / (actual_sq + self.epsilon)

@@ -245,3 +245,15 @@ class TestShapeChange:
         c.record(3, mx.ones((4,)))
         with pytest.raises(ValueError):
             c.record(3, mx.ones((8,)))
+
+    def test_accept_rejects_draft_of_stale_shape(self):
+        # On the step where the feature grows, the draft still has the old shape.
+        # (1, 4) broadcasts against (5, 4): without a shape check it could pass.
+        c = make_cache(order=1, tau_0=10.0)
+        c.record(1, mx.ones((1, 4)))
+        c.record(2, mx.ones((1, 4)))
+        actual = mx.ones((5, 4))
+        assert c.accept(3, c.extrapolate(3), actual) is False
+        # The documented loop then records the computed feature and restarts.
+        c.record(3, actual)
+        assert c.can_predict(4) is False
