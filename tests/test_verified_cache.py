@@ -214,3 +214,34 @@ class TestEndToEnd:
         # compute (only 1 anchor available), step 2 also (still need 2 anchors).
         # From step 2 onward, predictions should land exactly on truth and skip.
         assert skipped >= 6
+
+
+class TestShapeChange:
+    """A feature whose shape changes mid-run restarts the forecaster (diffusers #14831)."""
+
+    def test_shape_change_drops_old_anchors(self):
+        c = make_cache(order=1)
+        c.record(1, mx.ones((4,)))
+        c.record(2, mx.ones((4,)))
+        assert c.can_predict(3) is True
+        c.record(3, mx.ones((8,)))
+        # One anchor of the new shape: not enough for an order-1 forecast.
+        assert c.can_predict(4) is False
+
+    def test_forecast_uses_only_new_shape_anchors(self):
+        # (1,) broadcasts against (3,), so mixed anchors would silently forecast garbage.
+        c = make_cache(order=2)
+        c.record(1, mx.full((1,), 100.0))
+        c.record(2, mx.full((3,), 2.0))
+        c.record(3, mx.full((3,), 3.0))
+        assert c.can_predict(4) is False
+        c.record(4, mx.full((3,), 4.0))
+        pred = c.extrapolate(5)
+        assert pred.shape == (3,)
+        assert mx.allclose(pred, mx.full((3,), 5.0), atol=1e-5).item()
+
+    def test_step_order_still_enforced_across_shape_change(self):
+        c = make_cache(order=1)
+        c.record(3, mx.ones((4,)))
+        with pytest.raises(ValueError):
+            c.record(3, mx.ones((8,)))
