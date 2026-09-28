@@ -291,7 +291,7 @@ class TestTopkTransfer:
 
     def test_tie_policy_holds_at_scale(self):
         # The documented tie policy (lower position first) relies on MLX argsort
-        # being stable, which the API does not promise: pin it on a long row.
+        # being stable (documented since MLX 0.32.2): pin it on a long row.
         L = 4096
         rng = np.random.default_rng(30)
         conf = array_from_any(rng.choice([0.2, 0.5, 0.9], size=(2, L)).astype(np.float32))

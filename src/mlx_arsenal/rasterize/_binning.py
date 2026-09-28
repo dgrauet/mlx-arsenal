@@ -28,11 +28,11 @@ TILE_SIZES = (16, 32, 64)
 def _shift_amount(n: int) -> int:
     """Bit count ``k`` such that ``n == 1 << k``, for power-of-two ``n``.
 
-    ``mx.floor_divide`` truncates toward zero for negative operands rather
-    than flooring, so any division by a power of two that might see a
-    negative numerator must go through ``mx.right_shift`` instead, which is
-    an arithmetic (floor) shift and agrees with Python's ``//`` for all
-    signs.
+    Integer ``mx.floor_divide`` truncates toward zero on negative operands
+    up to MLX 0.32.x; ml-explore/mlx#4515 makes it floor from the next
+    release. Divisions by a power of two that may see a negative numerator
+    therefore go through ``mx.right_shift``, an arithmetic (floor) shift
+    that agrees with Python's ``//`` for all signs on every MLX version.
 
     Raises:
         ValueError: if ``n`` is not a positive power of two.
