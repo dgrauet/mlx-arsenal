@@ -79,6 +79,12 @@ def token_stats(
         suppress_ids: Token ids never proposed (e.g. the mask token, or EOS
             before the end of the canvas). Their logits are set to `-inf`
             first, so `prob` and `entropy` are over the remaining vocabulary.
+            Every position must keep at least one finite logit outside
+            `suppress_ids`: for a position whose remaining logits are all
+            `-inf` (e.g. a constrained vocabulary equal to the suppressed
+            set), `x0` is undefined (argmax of a row of `-inf`, possibly a
+            suppressed id) and `prob` is NaN. This is not checked, to avoid
+            a host sync per decoding step.
 
     Returns:
         :class:`TokenStats` `(x0, prob, entropy)`, each `(B, L)`.

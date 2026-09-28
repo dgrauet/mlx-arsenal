@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from mlx_arsenal._typing import array_from_any, item_float, item_int
+from mlx_arsenal.attention import block_causal_mask
 from mlx_arsenal.diffusion import (
     block_ranges,
     entropy_bound_transfer,
@@ -440,10 +441,16 @@ class TestBlockRanges:
     def test_aligned_prompt_on_boundary(self):
         assert block_ranges(8, 8, 4, align=True) == [(8, 12), (12, 16)]
 
-    def test_aligned_matches_block_causal_mask(self):
-        # every aligned range stays inside one block of block_causal_mask.
-        for start, end in block_ranges(5, 20, 4, align=True):
-            assert (start // 4) == ((end - 1) // 4)
+    @pytest.mark.parametrize(
+        ("prompt_len", "gen_len", "block_len"), [(5, 20, 4), (8, 8, 4), (0, 7, 3)]
+    )
+    def test_aligned_matches_block_causal_mask(self, prompt_len, gen_len, block_len):
+        # Positions of one aligned range see each other and nothing after it.
+        total = prompt_len + gen_len
+        visible = np.array(block_causal_mask(total, block_len)[0, 0]) == 0
+        for start, end in block_ranges(prompt_len, gen_len, block_len, align=True):
+            assert visible[start:end, start:end].all()
+            assert not visible[start:end, end:].any()
 
     def test_validation(self):
         with pytest.raises(ValueError, match="prompt_len"):
