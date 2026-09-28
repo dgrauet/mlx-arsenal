@@ -28,7 +28,12 @@ from .schedulers import (
 )
 from .teacache import TeaCacheController
 from .timestep import TimestepEmbedding, get_timestep_embedding
-from .uniform_decode import linear_temperature, renoise, uniform_canvas
+from .uniform_decode import (
+    StableConfidentStopping,
+    linear_temperature,
+    renoise,
+    uniform_canvas,
+)
 from .verified_cache import VerifiedFeatureCache, geometric_threshold
 from .window_residual import WindowResidualController
 
@@ -40,6 +45,7 @@ __all__ = [
     "HeadMaskCache",
     "PerHeadAttentionCache",
     "PerLayerAttentionCache",
+    "StableConfidentStopping",
     "TeaCacheController",
     "TimestepEmbedding",
     "TokenStats",

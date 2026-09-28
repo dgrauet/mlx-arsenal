@@ -1,10 +1,17 @@
 """Tests for mlx_arsenal.diffusion.uniform_decode."""
 
+import gc
+
 import mlx.core as mx
 import pytest
 
 from mlx_arsenal._typing import item_int
-from mlx_arsenal.diffusion import linear_temperature, renoise, uniform_canvas
+from mlx_arsenal.diffusion import (
+    StableConfidentStopping,
+    linear_temperature,
+    renoise,
+    uniform_canvas,
+)
 
 
 class TestLinearTemperature:
@@ -81,3 +88,69 @@ class TestRenoise:
             renoise(canvas, accepted.astype(mx.int32), canvas)
         with pytest.raises(ValueError, match="integer"):
             renoise(canvas.astype(mx.float32), accepted, canvas)
+
+
+class TestStableConfidentStopping:
+    LOW = mx.full((2, 4), 0.001)  # confident
+    HIGH = mx.full((2, 4), 1.0)  # not confident
+
+    def _canvas(self, a: int, b: int) -> mx.array:
+        return mx.array([[a] * 4, [b] * 4], dtype=mx.int32)
+
+    def test_needs_full_history(self):
+        stop = StableConfidentStopping(stability_threshold=2, confidence_threshold=0.005)
+        c = self._canvas(1, 1)
+        assert stop(c, self.LOW).tolist() == [False, False]  # no history
+        assert stop(c, self.LOW).tolist() == [False, False]  # only 1 previous
+        assert stop(c, self.LOW).tolist() == [True, True]  # 2 identical previous
+
+    def test_per_row(self):
+        stop = StableConfidentStopping(stability_threshold=1, confidence_threshold=0.005)
+        stop(self._canvas(1, 1), self.LOW)
+        assert stop(self._canvas(1, 2), self.LOW).tolist() == [True, False]
+
+    def test_confidence_gate(self):
+        stop = StableConfidentStopping(stability_threshold=1, confidence_threshold=0.005)
+        stop(self._canvas(1, 1), self.HIGH)
+        entropy = mx.array([[0.001] * 4, [1.0] * 4])
+        assert stop(self._canvas(1, 1), entropy).tolist() == [True, False]
+
+    def test_zero_threshold_is_always_stable(self):
+        stop = StableConfidentStopping(stability_threshold=0, confidence_threshold=0.005)
+        assert stop(self._canvas(1, 2), self.LOW).tolist() == [True, True]
+
+    def test_change_resets_stability(self):
+        stop = StableConfidentStopping(stability_threshold=1, confidence_threshold=0.005)
+        stop(self._canvas(1, 1), self.LOW)
+        stop(self._canvas(2, 2), self.LOW)
+        assert stop(self._canvas(2, 2), self.LOW).tolist() == [True, True]
+
+    def test_reset(self):
+        stop = StableConfidentStopping(stability_threshold=1, confidence_threshold=0.005)
+        c = self._canvas(1, 1)
+        stop(c, self.LOW)
+        stop.reset()
+        assert stop(c, self.LOW).tolist() == [False, False]
+
+    def test_history_does_not_pin_logits(self):
+        # A lazy argmax kept in the history would keep the (B, L, V) logits alive.
+        stop = StableConfidentStopping(stability_threshold=2)
+        logits = mx.random.normal((2, 256, 16384), key=mx.random.key(0))
+        mx.eval(logits)
+        stop(mx.argmax(logits, axis=-1), mx.zeros((2, 256)))
+        del logits
+        gc.collect()
+        mx.clear_cache()
+        assert mx.get_active_memory() < 2 * 256 * 16384 * 4 // 4
+
+    def test_validation(self):
+        with pytest.raises(ValueError, match="stability_threshold"):
+            StableConfidentStopping(stability_threshold=-1)
+        with pytest.raises(ValueError, match="confidence_threshold"):
+            StableConfidentStopping(confidence_threshold=0.0)
+        stop = StableConfidentStopping()
+        with pytest.raises(ValueError, match="shape"):
+            stop(self._canvas(1, 1), self.LOW[:, :2])
+        stop(self._canvas(1, 1), self.LOW)
+        with pytest.raises(ValueError, match="shape"):
+            stop(mx.zeros((2, 5), dtype=mx.int32), mx.zeros((2, 5)))

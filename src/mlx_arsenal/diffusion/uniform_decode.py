@@ -105,3 +105,73 @@ def renoise(canvas: mx.array, accepted: mx.array, noise: mx.array) -> mx.array:
     if not mx.issubdtype(canvas.dtype, mx.integer) or not mx.issubdtype(noise.dtype, mx.integer):
         raise ValueError(f"canvas and noise must be integer, got {canvas.dtype} and {noise.dtype}")
     return mx.where(accepted, canvas, noise.astype(canvas.dtype))
+
+
+class StableConfidentStopping:
+    """Stop decoding a canvas once its argmax is stable and confident.
+
+    Per batch row, stop when the argmax canvas equals each of the previous
+    ``stability_threshold`` argmax canvases (``0`` makes every call stable)
+    and the mean per-position entropy is below ``confidence_threshold``.
+    Before ``stability_threshold`` canvases have been seen, no row is stable.
+    This is Hugging Face's ``StableAndConfidentStoppingCriteria``
+    (DiffusionGemma defaults: 1 and 0.005); pass the entropy of the
+    temperature-scaled logits, as the reference does.
+
+    Call once per denoising step; :meth:`reset` before each new canvas.
+
+    Args:
+        stability_threshold: Number of previous identical canvases, ``>= 0``.
+        confidence_threshold: Mean-entropy bound (nats), ``> 0``.
+    """
+
+    def __init__(self, stability_threshold: int = 1, confidence_threshold: float = 0.005):
+        if stability_threshold < 0:
+            raise ValueError(f"stability_threshold must be >= 0, got {stability_threshold}")
+        if not confidence_threshold > 0:
+            raise ValueError(f"confidence_threshold must be > 0, got {confidence_threshold}")
+        self.stability_threshold = stability_threshold
+        self.confidence_threshold = confidence_threshold
+        self.reset()
+
+    def reset(self) -> None:
+        """Forget previous canvases. Call before decoding a new canvas."""
+        self._history: list[mx.array] = []
+
+    def __call__(self, argmax_canvas: mx.array, entropy: mx.array) -> mx.array:
+        """Decide, per row, whether to stop after this step.
+
+        Args:
+            argmax_canvas: ``(B, L)`` argmax tokens of this step.
+            entropy: ``(B, L)`` per-position entropy of this step.
+
+        Returns:
+            ``(B,)`` bool.
+        """
+        if argmax_canvas.ndim != 2 or tuple(entropy.shape) != tuple(argmax_canvas.shape):
+            raise ValueError(
+                f"argmax_canvas and entropy must share a (B, L) shape, got "
+                f"{tuple(argmax_canvas.shape)} and {tuple(entropy.shape)}"
+            )
+        if self._history and tuple(self._history[-1].shape) != tuple(argmax_canvas.shape):
+            raise ValueError(
+                f"canvas shape changed from {tuple(self._history[-1].shape)} to "
+                f"{tuple(argmax_canvas.shape)}; call reset() for a new canvas"
+            )
+        B = argmax_canvas.shape[0]
+        if self.stability_threshold == 0:
+            stable = mx.ones((B,), dtype=mx.bool_)
+        elif len(self._history) < self.stability_threshold:
+            stable = mx.zeros((B,), dtype=mx.bool_)
+        else:
+            stable = mx.ones((B,), dtype=mx.bool_)
+            for previous in self._history:
+                stable = mx.logical_and(stable, mx.all(mx.equal(previous, argmax_canvas), axis=-1))
+        if self.stability_threshold > 0:
+            # Materialize the small (B, L) canvas: kept lazy, it would pin the
+            # (B, L, V) logits it was computed from until it leaves the history.
+            mx.eval(argmax_canvas)
+            self._history.append(argmax_canvas)
+            self._history = self._history[-self.stability_threshold :]
+        confident = mx.mean(entropy.astype(mx.float32), axis=-1) < self.confidence_threshold
+        return mx.logical_and(stable, confident)
