@@ -61,6 +61,32 @@ def adaptive_euler(velocity_fn, x, stepper):
 Models conditioned on a timestep in `[0, 1000]` get `1000 · sigma`. The
 step count is not known in advance: size any per-step buffers dynamically.
 
+## Measured on ERNIE-Image (MLX)
+
+ERNIE-Image SFT (MLX port, int8), 512², CFG 5, two prompts, one seed each.
+Baseline: the model's own schedule (linear σ with shift 3) at `N` steps.
+Error: PSNR of the decoded image against the same schedule at 100 steps
+(closeness to the converged ODE solution, not a perceptual score).
+
+| Sampler | NFE | PSNR prompt 1 | PSNR prompt 2 |
+|---|---|---|---|
+| shifted schedule | 8 | 13.4 | 13.0 |
+| shifted schedule | 12 | 12.9 | 14.9 |
+| shifted schedule | 16 | 16.2 | 15.9 |
+| shifted schedule | 24 | 21.9 | 17.4 |
+| shifted schedule | 32 | 25.2 | 21.0 |
+| OV `λ=1`, 2 warm-up steps | 10 / 9 | 22.3 | 19.3 |
+| OV `λ=0.5`, 2 warm-up steps | 13 | 22.1 | 21.7 |
+| OV `λ=0.25`, 2 warm-up steps | 19 | 25.5 | 20.3 |
+| OT `λ=500`, 2 warm-up steps | 9 | 22.5 | 19.8 |
+| OV `λ=0.5`, no warm-up | 13 | 16.8 | 16.7 |
+
+With the paper's two warm-up steps, 9–13 adaptive steps reach the
+fidelity the fixed schedule needs 24–32 steps for; at 12 fixed steps the
+image already changes composition. Without warm-up the gain mostly
+disappears. OV and OT need very different `λ` on this latent (131k values):
+`λ = 1` gives OV about 10 steps, OT needs `λ` in the hundreds.
+
 ## Deviations and notes
 
 - **`λ` depends on the latent size.** `‖·‖₂` is taken over the whole latent,
