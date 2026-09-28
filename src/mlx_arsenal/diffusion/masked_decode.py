@@ -374,3 +374,58 @@ def block_ranges(
     first = (prompt_len // block_len + 1) * block_len if align else prompt_len + block_len
     bounds = [prompt_len, *range(first, end, block_len), end]
     return [(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
+
+
+def edit_transfer(
+    x0: mx.array,
+    prob: mx.array,
+    tokens: mx.array,
+    editable: mx.array,
+    threshold: float,
+    *,
+    strict: bool = True,
+) -> mx.array:
+    """Revise committed tokens the model now confidently predicts differently.
+
+    Token-to-token (T2T) editing, as in LLaDA2.1/2.2 (``editing_threshold``),
+    Nemotron-Labs Diffusion and SGLang's JointThreshold: an editable position
+    is overwritten with ``x0`` when ``x0`` differs from the current token and
+    its confidence exceeds ``threshold``. No edit is forced — a step may edit
+    nothing. Apply it alongside a mask-commit rule:
+    ``tokens = mx.where(commit | edit, x0, tokens)``.
+
+    Which positions are editable (committed, outside the prompt, possibly
+    before the first EOS) and when to stop iterating are caller-side; see the
+    LLaDA2.1 loop in the dLLM research note. ``x0`` may be the mask token if
+    it is not suppressed in :func:`token_stats`.
+
+    Args:
+        x0: `(B, L)` integer proposed tokens (:attr:`TokenStats.x0`).
+        prob: `(B, L)` confidence of `x0` (:attr:`TokenStats.prob`).
+        tokens: `(B, L)` integer current tokens.
+        editable: `(B, L)` bool, positions that may be revised.
+        threshold: Minimum confidence, in `[0, 1]`.
+        strict: Compare with `>` (LLaDA2.1 reference, default) or `>=`.
+
+    Returns:
+        `(B, L)` bool, a subset of ``editable & (x0 != tokens)``.
+    """
+    if x0.ndim != 2:
+        raise ValueError(f"x0 must have rank 2 (B, L), got shape {tuple(x0.shape)}")
+    shapes = {tuple(a.shape) for a in (x0, prob, tokens, editable)}
+    if len(shapes) != 1:
+        raise ValueError(
+            f"x0, prob, tokens and editable must share one shape, got {sorted(shapes)}"
+        )
+    if editable.dtype != mx.bool_:
+        raise ValueError(f"editable must have bool dtype, got {editable.dtype}")
+    if not mx.issubdtype(x0.dtype, mx.integer) or not mx.issubdtype(tokens.dtype, mx.integer):
+        raise ValueError(
+            f"x0 and tokens must have integer dtypes, got {x0.dtype} and {tokens.dtype}"
+        )
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError(f"threshold must be in [0, 1], got {threshold}")
+    p = prob.astype(mx.float32)
+    confident = p > threshold if strict else p >= threshold
+    changed = mx.not_equal(x0.astype(mx.int64), tokens.astype(mx.int64))
+    return mx.logical_and(mx.logical_and(editable, changed), confident)

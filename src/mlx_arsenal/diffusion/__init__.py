@@ -12,6 +12,7 @@ from .mask_reuse import HeadMaskCache, pooled_qk, qk_drift
 from .masked_decode import (
     TokenStats,
     block_ranges,
+    edit_transfer,
     entropy_bound_transfer,
     factor_transfer,
     threshold_transfer,
@@ -48,6 +49,7 @@ __all__ = [
     "cfg_skip_mask",
     "classifier_free_guidance",
     "dynamic_shift_schedule",
+    "edit_transfer",
     "entropy_bound_transfer",
     "euler_step",
     "factor_transfer",
