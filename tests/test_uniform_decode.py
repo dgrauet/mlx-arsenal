@@ -38,8 +38,12 @@ class TestLinearTemperature:
             linear_temperature(-1, 10)
         with pytest.raises(ValueError, match="t_min"):
             linear_temperature(1, 10, t_min=0.0)
-        with pytest.raises(ValueError, match="t_min"):
-            linear_temperature(1, 10, t_min=0.9, t_max=0.8)
+        with pytest.raises(ValueError, match="t_max"):
+            linear_temperature(1, 10, t_max=0.0)
+
+    def test_rising_schedule_is_allowed(self):
+        # Hugging Face does not require t_min <= t_max.
+        assert linear_temperature(10, 10, t_min=0.9, t_max=0.5) == pytest.approx(0.5)
 
 
 class TestUniformCanvas:

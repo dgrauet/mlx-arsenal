@@ -41,7 +41,8 @@ def linear_temperature(
         remaining: Steps remaining, in ``[0, num_steps]``.
         num_steps: Maximum number of denoising steps, ``>= 1``.
         t_min: Final temperature, ``> 0``.
-        t_max: Initial temperature, ``>= t_min``.
+        t_max: Initial temperature, ``> 0`` (usually ``>= t_min``; a rising
+            schedule is accepted, as in the reference).
 
     Returns:
         The temperature to divide the logits by.
@@ -50,8 +51,8 @@ def linear_temperature(
         raise ValueError(f"num_steps must be >= 1, got {num_steps}")
     if not 0 <= remaining <= num_steps:
         raise ValueError(f"remaining must be in [0, {num_steps}], got {remaining}")
-    if not 0 < t_min <= t_max:
-        raise ValueError(f"need 0 < t_min <= t_max, got t_min={t_min}, t_max={t_max}")
+    if not t_min > 0 or not t_max > 0:
+        raise ValueError(f"t_min and t_max must be > 0, got t_min={t_min}, t_max={t_max}")
     return t_min + (t_max - t_min) * remaining / num_steps
 
 

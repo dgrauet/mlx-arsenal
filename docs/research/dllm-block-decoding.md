@@ -199,7 +199,7 @@ def decode_uniform(model, *, batch, canvas_len, vocab_size, num_steps=48, entrop
         steps += 1
         z = model(canvas) / linear_temperature(remaining, num_steps, t_min=t_min, t_max=t_max)
         stats = token_stats(z)  # argmax canvas and entropy of softmax(z)
-        sample = mx.random.categorical(z).astype(mx.int32)
+        sample = mx.random.categorical(z.astype(mx.float32)).astype(mx.int32)
         accepted = entropy_bound_transfer(stats.entropy, everywhere, entropy_bound)
         new_canvas = renoise(sample, accepted, uniform_canvas(canvas.shape, vocab_size))
         # finished rows are frozen, as in the reference
