@@ -8,7 +8,7 @@ from .cfg_skip import (
     cfg_skip_mask,
 )
 from .ddim import DDIMScheduler
-from .mask_reuse import pooled_qk, qk_drift
+from .mask_reuse import HeadMaskCache, pooled_qk, qk_drift
 from .masked_decode import (
     TokenStats,
     block_ranges,
@@ -35,6 +35,7 @@ __all__ = [
     "CFGSkipController",
     "DDIMScheduler",
     "FlowMatchEulerDiscreteScheduler",
+    "HeadMaskCache",
     "PerHeadAttentionCache",
     "PerLayerAttentionCache",
     "TeaCacheController",
