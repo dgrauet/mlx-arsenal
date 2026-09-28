@@ -1,5 +1,9 @@
 """Tests for the SeaCache SEA spectral filter."""
 
+import re
+from pathlib import Path
+from typing import Any
+
 import mlx.core as mx
 import numpy as np
 import pytest
@@ -116,3 +120,60 @@ class TestTeaCacheWithoutCoefficients:
         got_b = [b.should_compute(i, x) for i, x in enumerate(seq)]
         assert got_a == got_b
         assert got_a == [True, False, False, True, False, True]
+
+
+def _load_recipe():
+    note = Path(__file__).parent.parent / "docs" / "research" / "seacache.md"
+    match = re.search(r"<!-- seacache-recipe -->\s*```python\n(.*?)```", note.read_text(), re.S)
+    assert match, "SeaCache recipe block not found in the research note"
+    namespace: dict[str, Any] = {}
+    exec(match.group(1), namespace)
+    return namespace["seacache_should_compute"]
+
+
+def reference_gating(tokens, grid, sigmas, thresh, power_exp):
+    """Reference SeaCache loop (filter every step, raw relative L1, TeaCache boundaries)."""
+    decisions, prev, acc = [], None, 0.0
+    n = len(tokens)
+    for i, (t, sigma) in enumerate(zip(tokens, sigmas)):
+        sigma = min(max(sigma, 1e-6), 1 - 1e-6)
+        x = t.reshape(t.shape[0], *grid, t.shape[-1])
+        f = reference_sea(x, 1 - sigma, sigma, tuple(range(1, x.ndim - 1)), power_exp)
+        if i == 0 or i == n - 1:
+            compute, acc = True, 0.0
+        else:
+            assert prev is not None
+            acc += np.abs(f - prev).mean() / (np.abs(prev).mean() + 1e-16)
+            compute = acc >= thresh
+            if compute:
+                acc = 0.0
+        decisions.append(compute)
+        prev = f
+    return decisions
+
+
+class TestSeaCacheRecipe:
+    @pytest.mark.parametrize(
+        ("grid", "power_exp", "thresh"), [((8, 12), 2.0, 0.3), ((3, 6, 8), 3.0, 0.2)]
+    )
+    def test_decisions_match_reference_loop(self, grid, power_exp, thresh):
+        should_compute = _load_recipe()
+        rng = np.random.default_rng(7)
+        C, steps = 4, 20
+        n = int(np.prod(grid))
+        x0 = rng.standard_normal((1, n, C))
+        noise = rng.standard_normal((1, n, C))
+        sigmas = list(np.linspace(1.0, 0.0, steps))
+        # Flow-matching trajectory plus a slowly drifting "modulation" term.
+        tokens = [
+            ((1 - s) * x0 + s * noise + 0.05 * i * x0).astype(np.float32)
+            for i, s in enumerate(sigmas)
+        ]
+        ref = reference_gating(tokens, grid, sigmas, thresh, power_exp)
+        controller = TeaCacheController(num_steps=steps, rel_l1_thresh=thresh)
+        got = [
+            should_compute(controller, i, array_from_any(t), grid, float(s), power_exp=power_exp)
+            for i, (t, s) in enumerate(zip(tokens, sigmas))
+        ]
+        assert got == ref
+        assert 0 < got.count(False) < steps - 2  # the gate both skips and computes
