@@ -9,7 +9,10 @@ import pytest
 from mlx_arsenal._typing import array_from_any
 from mlx_arsenal.attention import (
     antidiagonal_block_scores,
+    block_self_similarity,
     centroid_compensated_attention,
+    select_tiling,
+    tile_labels,
     top_p_block_mask,
 )
 
@@ -186,3 +189,106 @@ class TestTopPBlockMask:
             top_p_block_mask(scores, mx.array([0.9, 0.9]))
         with pytest.raises(ValueError, match="threshold"):
             top_p_block_mask(scores, mx.array([0.9, 0.0, 0.9]))
+
+
+def _spade_block_summarize(x: np.ndarray, block_size: int) -> np.ndarray:
+    """Transcription of SPADE's torch `_block_summarize` (mean off-diagonal cosine)."""
+    B, H, N, D = x.shape
+    t = x.astype(np.float64).reshape(B, H, N // block_size, block_size, D)
+    norm = np.linalg.norm(t, axis=-1, keepdims=True)
+    tn = t / (norm + 1e-8)
+    cos = tn @ np.swapaxes(tn, -1, -2)
+    valid = norm[..., 0] > 1e-8
+    pair = valid[..., :, None] & valid[..., None, :]
+    final = pair & ~np.eye(block_size, dtype=bool)
+    return np.where(final, cos, 0).sum(axis=(-1, -2)) / (final.sum(axis=(-1, -2)) + 1e-8)
+
+
+class TestBlockSelfSimilarity:
+    def test_matches_spade_reference(self):
+        q, _ = _qk(2, 3, 64, 64, 8, 30)
+        out = block_self_similarity(q, block_size=16)
+        assert out.shape == (2, 3, 4)
+        assert out.dtype == mx.float32
+        np.testing.assert_allclose(
+            np.array(out), _spade_block_summarize(np.array(q), 16), atol=1e-5
+        )
+
+    def test_zero_norm_tokens_excluded(self):
+        q, _ = _qk(1, 2, 32, 32, 8, 31)
+        qn = np.array(q)
+        qn[:, :, ::3] = 0.0  # padding tokens
+        out = block_self_similarity(array_from_any(qn), block_size=8)
+        np.testing.assert_allclose(np.array(out), _spade_block_summarize(qn, 8), atol=1e-5)
+
+    def test_single_valid_token_block(self):
+        x = np.zeros((1, 1, 8, 4), dtype=np.float32)
+        x[0, 0, 0] = 1.0  # block 0: one valid token; block 1: none
+        out = block_self_similarity(array_from_any(x), block_size=4)
+        assert np.array(out).tolist() == [[[0.0, 0.0]]]
+
+    def test_identical_tokens_have_similarity_one(self):
+        x = mx.broadcast_to(mx.array([0.3, -1.0, 2.0]), (1, 1, 8, 3))
+        assert mx.allclose(
+            block_self_similarity(x, block_size=4), mx.ones((1, 1, 2)), atol=1e-6
+        ).item()
+
+    def test_bf16_inputs(self):
+        q, _ = _qk(1, 2, 32, 32, 8, 32)
+        out = block_self_similarity(q.astype(mx.bfloat16), block_size=8)
+        assert out.dtype == mx.float32
+        assert mx.allclose(out, block_self_similarity(q, block_size=8), atol=2e-2).item()
+
+    def test_validation(self):
+        q, _ = _qk(1, 2, 32, 32, 8, 33)
+        with pytest.raises(ValueError, match="rank 4"):
+            block_self_similarity(q[0], block_size=8)
+        with pytest.raises(ValueError, match="multiple of block_size"):
+            block_self_similarity(q, block_size=5)
+        with pytest.raises(ValueError, match="block_size"):
+            block_self_similarity(q, block_size=0)
+
+
+class TestSelectTiling:
+    T, Hh, W = 2, 4, 8  # 64 tokens
+    SPATIAL, TEMPORAL = (1, 4, 4), (2, 1, 8)
+
+    def _coherent(self, tile: tuple[int, int, int], seed: int) -> np.ndarray:
+        """(N, D) queries sharing one random direction per tile of `tile`, plus small noise."""
+        rng = np.random.default_rng(seed)
+        labels = np.array(tile_labels(self.T, self.Hh, self.W, tile=tile))
+        dirs = rng.normal(size=(labels.max() + 1, 16))
+        return (dirs[labels] + 0.05 * rng.normal(size=(labels.size, 16))).astype(np.float32)
+
+    def test_picks_the_coherent_tiling_per_head(self):
+        q = np.stack([self._coherent(self.SPATIAL, 1), self._coherent(self.TEMPORAL, 2)])[None]
+        out = select_tiling(
+            array_from_any(q), (self.T, self.Hh, self.W), [self.SPATIAL, self.TEMPORAL]
+        )
+        assert out.dtype == mx.int32
+        assert out.tolist() == [[0, 1]]
+
+    def test_per_head_choice(self):
+        heads = [self._coherent(t, s) for t, s in ((self.TEMPORAL, 3), (self.SPATIAL, 4))]
+        q = np.stack([np.stack(heads), np.stack(heads[::-1])])  # (B=2, H=2, N, D)
+        out = select_tiling(
+            array_from_any(q), (self.T, self.Hh, self.W), [self.SPATIAL, self.TEMPORAL]
+        )
+        assert out.tolist() == [[1, 0], [0, 1]]
+
+    def test_ties_pick_the_first_candidate(self):
+        q = mx.broadcast_to(mx.array([1.0, 2.0]), (1, 1, 64, 2))
+        out = select_tiling(q, (self.T, self.Hh, self.W), [self.TEMPORAL, self.SPATIAL])
+        assert out.tolist() == [[0]]
+
+    def test_validation(self):
+        q = mx.zeros((1, 1, 64, 4))
+        grid = (self.T, self.Hh, self.W)
+        with pytest.raises(ValueError, match="grid"):
+            select_tiling(q, (2, 4, 4), [self.SPATIAL])
+        with pytest.raises(ValueError, match="tiles"):
+            select_tiling(q, grid, [])
+        with pytest.raises(ValueError, match="divisible"):
+            select_tiling(q, grid, [(1, 3, 4)])
+        with pytest.raises(ValueError, match="rank 4"):
+            select_tiling(q[0], grid, [self.SPATIAL])
