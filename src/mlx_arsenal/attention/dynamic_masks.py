@@ -239,3 +239,67 @@ def select_tiling(
         size = tile[0] * tile[1] * tile[2]
         cohesion.append(mx.mean(block_self_similarity(blocked, block_size=size), axis=-1))
     return mx.argmax(mx.stack(cohesion), axis=0).astype(mx.int32)
+
+
+def minmax_block_scores(q: mx.array, k: mx.array, *, block_size: int) -> mx.array:
+    """Cheap per-block attention estimate from element-wise min/max summaries.
+
+    SPADE's estimator ("DSA"): each block of ``block_size`` consecutive
+    tokens is summarized by its element-wise max and min over tokens, and the
+    (query block, key block) score is
+    ``max((q_max + q_min) · k_maxᵀ, (q_max + q_min) · k_minᵀ)`` — a
+    ``(Nq/bs) × (Nk/bs)`` matmul pair instead of ``Nq × Nk``. Scores are
+    unscaled logit estimates (as in the reference): rank them with
+    :func:`top_k_block_mask`, or softmax each row before
+    :func:`top_p_block_mask`. Reorder tokens first (e.g. by the tiling from
+    :func:`select_tiling`) so blocks are meaningful.
+
+    Args:
+        q: ``(B, H, Nq, D)`` queries in block order.
+        k: ``(B, H, Nk, D)`` keys in block order, same ``(B, H)``.
+        block_size: Tokens per block; ``Nq`` and ``Nk`` must be multiples.
+
+    Returns:
+        ``(B, H, Nq // block_size, Nk // block_size)`` float32 scores.
+    """
+    if q.ndim != 4 or k.ndim != 4:
+        raise ValueError(f"q and k must have rank 4, got {q.ndim} and {k.ndim}")
+    if k.shape[:2] != q.shape[:2]:
+        raise ValueError(f"q and k must share (batch, heads), got {q.shape[:2]} and {k.shape[:2]}")
+    B, H, Nq, D = q.shape
+    Nk = k.shape[2]
+    if k.shape[3] != D:
+        raise ValueError(f"q and k head dim differ: {D} vs {k.shape[3]}")
+    if block_size < 1:
+        raise ValueError(f"block_size must be >= 1, got {block_size}")
+    if Nq % block_size or Nk % block_size:
+        raise ValueError(f"Nq ({Nq}) and Nk ({Nk}) must be a multiple of block_size ({block_size})")
+    qb = q.astype(mx.float32).reshape(B, H, Nq // block_size, block_size, D)
+    kb = k.astype(mx.float32).reshape(B, H, Nk // block_size, block_size, D)
+    q_mid = mx.max(qb, axis=3) + mx.min(qb, axis=3)
+    with_max = q_mid @ mx.max(kb, axis=3).swapaxes(-1, -2)
+    with_min = q_mid @ mx.min(kb, axis=3).swapaxes(-1, -2)
+    return mx.maximum(with_max, with_min)
+
+
+def top_k_block_mask(scores: mx.array, k: int) -> mx.array:
+    """Keep the ``k`` highest-scoring key blocks of every query-block row.
+
+    SPADE's selection rule (a fixed block budget, e.g. 17 % of the key
+    blocks on Wan 2.1). Ties keep the lower block index; ``k`` larger than
+    the number of key blocks keeps them all.
+
+    Args:
+        scores: ``(B, H, Cq, Ck)`` block scores, e.g. from
+            :func:`minmax_block_scores` or :func:`antidiagonal_block_scores`.
+        k: Blocks kept per row, ``>= 1``.
+
+    Returns:
+        ``(B, H, Cq, Ck)`` float32 additive mask (``0`` kept, ``-inf`` skipped).
+    """
+    if scores.ndim != 4:
+        raise ValueError(f"scores must have rank 4 (B, H, Cq, Ck), got shape {tuple(scores.shape)}")
+    if k < 1:
+        raise ValueError(f"k must be >= 1, got {k}")
+    rank = mx.argsort(mx.argsort(-scores.astype(mx.float32), axis=-1), axis=-1)
+    return mx.where(rank < k, 0.0, float("-inf")).astype(mx.float32)

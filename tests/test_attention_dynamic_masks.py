@@ -11,8 +11,10 @@ from mlx_arsenal.attention import (
     antidiagonal_block_scores,
     block_self_similarity,
     centroid_compensated_attention,
+    minmax_block_scores,
     select_tiling,
     tile_labels,
+    top_k_block_mask,
     top_p_block_mask,
 )
 
@@ -292,3 +294,73 @@ class TestSelectTiling:
             select_tiling(q, grid, [(1, 3, 4)])
         with pytest.raises(ValueError, match="rank 4"):
             select_tiling(q[0], grid, [self.SPATIAL])
+
+
+def _spade_minmax(q: np.ndarray, k: np.ndarray, block_size: int) -> np.ndarray:
+    """Transcription of SPADE's `estimate_func_minmax` on contiguous blocks."""
+    B, H, Nq, D = q.shape
+    Nk = k.shape[2]
+    qb = q.astype(np.float64).reshape(B, H, Nq // block_size, block_size, D)
+    kb = k.astype(np.float64).reshape(B, H, Nk // block_size, block_size, D)
+    qsum = qb.max(axis=3) + qb.min(axis=3)
+    return np.maximum(
+        qsum @ np.swapaxes(kb.max(axis=3), -1, -2), qsum @ np.swapaxes(kb.min(axis=3), -1, -2)
+    )
+
+
+class TestMinmaxBlockScores:
+    def test_matches_spade_reference(self):
+        q, k = _qk(2, 3, 32, 48, 8, 40)
+        out = minmax_block_scores(q, k, block_size=8)
+        assert out.shape == (2, 3, 4, 6)
+        assert out.dtype == mx.float32
+        np.testing.assert_allclose(
+            np.array(out), _spade_minmax(np.array(q), np.array(k), 8), rtol=1e-5, atol=1e-5
+        )
+
+    def test_bf16_inputs(self):
+        q, k = _qk(1, 2, 32, 32, 8, 41)
+        out = minmax_block_scores(q.astype(mx.bfloat16), k.astype(mx.bfloat16), block_size=8)
+        assert out.dtype == mx.float32
+        assert mx.allclose(
+            out, minmax_block_scores(q, k, block_size=8), rtol=2e-2, atol=5e-2
+        ).item()
+
+    def test_validation(self):
+        q, k = _qk(1, 2, 32, 32, 8, 42)
+        with pytest.raises(ValueError, match="rank 4"):
+            minmax_block_scores(q[0], k, block_size=8)
+        with pytest.raises(ValueError, match="heads"):
+            minmax_block_scores(q, k[:, :1], block_size=8)
+        with pytest.raises(ValueError, match="head dim"):
+            minmax_block_scores(q, k[..., :4], block_size=8)
+        with pytest.raises(ValueError, match="multiple of block_size"):
+            minmax_block_scores(q, k, block_size=5)
+
+
+class TestTopKBlockMask:
+    def test_matches_topk_reference(self):
+        rng = np.random.default_rng(43)
+        scores = rng.normal(size=(2, 3, 4, 10)).astype(np.float32)
+        out = np.array(top_k_block_mask(array_from_any(scores), 3)) == 0.0
+        ref = np.zeros_like(out)
+        top = np.argsort(-scores, axis=-1, kind="stable")[..., :3]
+        np.put_along_axis(ref, top, True, axis=-1)
+        assert np.array_equal(out, ref)
+        assert np.isneginf(np.array(top_k_block_mask(array_from_any(scores), 3))[~ref]).all()
+
+    def test_k_clipped(self):
+        scores = mx.array([[[[0.1, 0.5, 0.2]]]])
+        assert (np.array(top_k_block_mask(scores, 10)) == 0.0).all()
+
+    def test_ties_keep_lower_index(self):
+        scores = mx.array([[[[1.0, 2.0, 2.0, 2.0]]]])
+        assert (np.array(top_k_block_mask(scores, 2)) == 0.0).tolist() == [
+            [[[False, True, True, False]]]
+        ]
+
+    def test_validation(self):
+        with pytest.raises(ValueError, match="rank 4"):
+            top_k_block_mask(mx.zeros((2, 3)), 1)
+        with pytest.raises(ValueError, match="k"):
+            top_k_block_mask(mx.zeros((1, 1, 2, 3)), 0)
