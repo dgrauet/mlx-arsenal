@@ -610,3 +610,42 @@ class TestReferenceLoop:
             assert forwards == n_blocks  # everything commits in one step per block
         if threshold == 1.0:
             assert forwards == 12  # one forced commit per step
+
+
+def _load_editing_loop() -> Any:
+    note = Path(__file__).parents[1] / "docs" / "research" / "dllm-block-decoding.md"
+    match = re.search(r"<!-- editing-loop -->\s*```python\n(.*?)```", note.read_text(), re.S)
+    assert match, "editing loop block not found in the research note"
+    namespace: dict[str, Any] = {}
+    exec(match.group(1), namespace)
+    return namespace["decode_with_editing"]
+
+
+class TestEditingLoop:
+    V, MASK = 40, 39
+
+    def test_decodes_and_keeps_the_prompt(self):
+        decode = _load_editing_loop()
+        prompt = mx.array([[1, 2, 3], [4, 5, 6]], dtype=mx.int32)
+        model = TestReferenceLoop()._model(3)
+        out, forwards = decode(model, prompt, gen_len=12, block_len=4, mask_id=self.MASK)
+        assert out.shape == (2, 12)
+        assert not mx.any(out == self.MASK).item()
+        assert forwards >= len(block_ranges(3, 13, 4, align=True))
+
+    def test_loop_respects_max_post_steps(self):
+        # A model that always predicts `token + 1` with certainty: every committed
+        # token is edited on every pass, so each block runs 1 + max_post_steps passes.
+        decode = _load_editing_loop()
+        V = self.V
+
+        def flipping(x: mx.array) -> mx.array:
+            onehot = mx.equal(mx.expand_dims((x + 1) % V, -1), mx.arange(V))
+            return mx.where(onehot, 50.0, -50.0)
+
+        prompt = mx.array([[1, 2, 3, 4]], dtype=mx.int32)  # one full prompt block
+        out, forwards = decode(
+            flipping, prompt, gen_len=8, block_len=4, mask_id=self.MASK, max_post_steps=3
+        )
+        assert forwards == 2 * (1 + 3)  # two generated blocks
+        assert not mx.any(out == self.MASK).item()
