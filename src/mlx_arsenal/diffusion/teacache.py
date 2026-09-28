@@ -39,12 +39,19 @@ class TeaCacheController:
     Boundary steps (``step_index == 0`` and ``step_index == num_steps - 1``)
     always compute and reset the accumulator.
 
+    With ``max_consecutive_skips=n``, a step that would be the ``n + 1``-th
+    skip in a row computes instead (and resets the accumulator), bounding how
+    stale the reused residual can get. The count restarts after every
+    computed step, whatever triggered it. diffusers' SeaCache uses ``n = 2``.
+
     Args:
         num_steps: Total number of denoising steps in the generation.
         rel_l1_thresh: Skip threshold on the accumulated rescaled L1 distance.
         coefficients: Polynomial coefficients in ``numpy.poly1d`` order
             (highest degree first), calibrated to map raw L1 distances to a
             quality budget.
+        max_consecutive_skips: Optional cap on back-to-back skips (``>= 1``).
+            ``None`` (default) never forces a compute.
     """
 
     def __init__(
@@ -52,26 +59,35 @@ class TeaCacheController:
         num_steps: int,
         rel_l1_thresh: float,
         coefficients: Sequence[float],
+        *,
+        max_consecutive_skips: int | None = None,
     ):
         if num_steps < 1:
             raise ValueError(f"num_steps must be >= 1, got {num_steps}")
         if rel_l1_thresh < 0:
             raise ValueError(f"rel_l1_thresh must be >= 0, got {rel_l1_thresh}")
+        if max_consecutive_skips is not None and max_consecutive_skips < 1:
+            raise ValueError(
+                f"max_consecutive_skips must be >= 1 or None, got {max_consecutive_skips}"
+            )
         self.num_steps = num_steps
         self.rel_l1_thresh = rel_l1_thresh
         self.coefficients = list(coefficients)
+        self.max_consecutive_skips = max_consecutive_skips
         self._rescale = np.poly1d(self.coefficients)
         self._state = RelL1State(
             "should_compute called for a non-boundary step before step 0 — "
             "boundary steps must run first to seed the modulation cache."
         )
         self._accumulated: float = 0.0
+        self._consecutive_skips = 0
         self._prev_residual: Any | None = None
 
     def reset(self) -> None:
         """Clear all state. Call at the start of each new generation."""
         self._state.reset()
         self._accumulated = 0.0
+        self._consecutive_skips = 0
         self._prev_residual = None
 
     def should_compute(self, step_index: int, modulated_input: mx.array) -> bool:
@@ -82,21 +98,27 @@ class TeaCacheController:
         """
         check_step(step_index, self.num_steps)
         if step_index == 0 or step_index == self.num_steps - 1:
-            self._accumulated = 0.0
             self._state.seed(modulated_input)
-            return True
+            return self._compute()
 
         delta = self._state.delta(modulated_input)
         if delta is None:
             # Degenerate modulation (all-zeros). Delta is undefined; force compute
             # and reset the accumulator rather than propagating inf/nan.
-            self._accumulated = 0.0
-            return True
+            return self._compute()
         self._accumulated += float(self._rescale(delta))
 
-        if self._accumulated < self.rel_l1_thresh:
-            return False
+        if self._accumulated >= self.rel_l1_thresh:
+            return self._compute()
+        cap = self.max_consecutive_skips
+        if cap is not None and self._consecutive_skips >= cap:
+            return self._compute()
+        self._consecutive_skips += 1
+        return False
+
+    def _compute(self) -> bool:
         self._accumulated = 0.0
+        self._consecutive_skips = 0
         return True
 
     def cache_residual(self, residual: Any) -> None:
