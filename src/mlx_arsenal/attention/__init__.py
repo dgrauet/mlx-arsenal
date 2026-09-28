@@ -4,7 +4,7 @@ from mlx_arsenal.attention.compensation import (
     select_probe_rows,
     tile_labels,
 )
-from mlx_arsenal.attention.masks import causal_mask, sliding_window_mask
+from mlx_arsenal.attention.masks import block_causal_mask, causal_mask, sliding_window_mask
 from mlx_arsenal.attention.permute import (
     block_contiguous_permutation,
     invert_permutation,
@@ -28,6 +28,7 @@ from mlx_arsenal.attention.video_masks import (
 
 __all__ = [
     "Kind",
+    "block_causal_mask",
     "block_contiguous_permutation",
     "causal_mask",
     "centroid_compensated_attention",
