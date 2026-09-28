@@ -49,7 +49,9 @@ class TeaCacheController:
         rel_l1_thresh: Skip threshold on the accumulated rescaled L1 distance.
         coefficients: Polynomial coefficients in ``numpy.poly1d`` order
             (highest degree first), calibrated to map raw L1 distances to a
-            quality budget.
+            quality budget. ``None`` (default) uses the raw distance, as
+            SeaCache does on :func:`~mlx_arsenal.diffusion.sea_filter`
+            outputs.
         max_consecutive_skips: Optional cap on back-to-back skips (``>= 1``).
             ``None`` (default) never forces a compute.
     """
@@ -58,7 +60,7 @@ class TeaCacheController:
         self,
         num_steps: int,
         rel_l1_thresh: float,
-        coefficients: Sequence[float],
+        coefficients: Sequence[float] | None = None,
         *,
         max_consecutive_skips: int | None = None,
     ):
@@ -72,7 +74,7 @@ class TeaCacheController:
             )
         self.num_steps = num_steps
         self.rel_l1_thresh = rel_l1_thresh
-        self.coefficients = list(coefficients)
+        self.coefficients = [1.0, 0.0] if coefficients is None else list(coefficients)
         self.max_consecutive_skips = max_consecutive_skips
         self._rescale = np.poly1d(self.coefficients)
         self._state = RelL1State(

@@ -26,6 +26,7 @@ from .schedulers import (
     dynamic_shift_schedule,
     get_sampling_sigmas,
 )
+from .seacache import sea_filter
 from .teacache import TeaCacheController
 from .timestep import TimestepEmbedding, get_timestep_embedding
 from .uniform_decode import (
@@ -47,6 +48,7 @@ __all__ = [
     "PerLayerAttentionCache",
     "StableConfidentStopping",
     "TeaCacheController",
+    "sea_filter",
     "TimestepEmbedding",
     "TokenStats",
     "VerifiedFeatureCache",
