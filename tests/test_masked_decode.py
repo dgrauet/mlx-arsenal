@@ -236,6 +236,18 @@ class TestThresholdTransfer:
         # tie between positions 1 and 2: the first candidate wins.
         assert threshold_transfer(conf, cand, 0.9).tolist() == [[False, True, False, False]]
 
+    def test_strict_excludes_the_threshold_itself(self):
+        # LLaDA2's reference commits `conf > tau`; Fast-dLLM / Nemotron `conf >= tau`.
+        conf = mx.array([[0.95, 0.96, 0.5]])
+        cand = mx.ones((1, 3), dtype=mx.bool_)
+        assert threshold_transfer(conf, cand, 0.95).tolist() == [[True, True, False]]
+        assert threshold_transfer(conf, cand, 0.95, strict=True).tolist() == [[False, True, False]]
+
+    def test_strict_still_forces_one(self):
+        conf = mx.array([[0.95, 0.2]])
+        cand = mx.ones((1, 2), dtype=mx.bool_)
+        assert threshold_transfer(conf, cand, 0.95, strict=True).tolist() == [[True, False]]
+
     def test_rows_are_independent(self):
         conf = mx.array([[0.9, 0.95, 0.1], [0.9, 0.95, 0.1]])
         cand = mx.array([[False, False, False], [True, True, True]])

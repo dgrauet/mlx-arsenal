@@ -152,6 +152,7 @@ def threshold_transfer(
     threshold: float,
     *,
     force_one: bool = True,
+    strict: bool = False,
 ) -> mx.array:
     """Commit every candidate whose confidence reaches `threshold`.
 
@@ -161,6 +162,10 @@ def threshold_transfer(
     with `threshold` (and SGLang's LowConfidence); dInfer instead lowers the
     threshold to `max - 1e-5`, which can commit several near-tied tokens.
 
+    The comparison is `confidence >= threshold` (Fast-dLLM, Nemotron-Labs
+    Diffusion); pass `strict=True` for `confidence > threshold`, which is what
+    the LLaDA2.x reference `generate` uses.
+
     Args:
         confidence: `(B, L)` score, higher commits first (e.g.
             :attr:`TokenStats.prob`).
@@ -168,6 +173,7 @@ def threshold_transfer(
             and inside the current block).
         threshold: Minimum confidence, in `[0, 1]`.
         force_one: Guarantee one commit per non-empty row.
+        strict: Use `>` instead of `>=`.
 
     Returns:
         `(B, L)` bool, a subset of `candidates`.
@@ -175,7 +181,9 @@ def threshold_transfer(
     _check_rule_inputs(confidence, candidates, "confidence")
     if not 0.0 <= threshold <= 1.0:
         raise ValueError(f"threshold must be in [0, 1], got {threshold}")
-    selected = mx.logical_and(candidates, confidence.astype(mx.float32) >= threshold)
+    conf = confidence.astype(mx.float32)
+    passes = conf > threshold if strict else conf >= threshold
+    selected = mx.logical_and(candidates, passes)
     if not force_one:
         return selected
     top1 = mx.logical_and(candidates, _rank(confidence, candidates, descending=True) == 0)
