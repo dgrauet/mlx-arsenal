@@ -394,9 +394,10 @@ def edit_transfer(
     nothing. Apply it alongside a mask-commit rule:
     ``tokens = mx.where(commit | edit, x0, tokens)``.
 
-    Which positions are editable (committed, outside the prompt, possibly
-    before the first EOS) and when to stop iterating are caller-side; see the
-    LLaDA2.1 loop in the dLLM research note. ``x0`` may be the mask token if
+    Which positions are editable (committed and outside the prompt in the
+    LLaDA2.1 reference; mlx-vlm additionally stops at the first EOS when
+    ``eos_early_stop`` is on) and when to stop iterating are caller-side; see
+    the LLaDA2.1 loop in the dLLM research note. ``x0`` may be the mask token if
     it is not suppressed in :func:`token_stats`.
 
     Args:

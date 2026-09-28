@@ -115,8 +115,12 @@ the mask commit, a committed position outside the prompt takes the new
 prediction when it differs and its confidence exceeds `editing_threshold`.
 A block ends when it has no mask and no edit happened, or after
 `max_post_steps` extra passes once it is full. This is the LLaDA2.1
-reference loop (it re-runs the window each step with `block_causal_mask`,
-which is the model's job here). The test suite executes this exact block.
+reference loop minus its `eos_early_stop` option and final cut at the first
+EOS (it re-runs the window each step with `block_causal_mask`, which is the
+model's job here). Like the reference, it is written for batch 1: with
+`B > 1` the rows share the loop's termination, so a finished row keeps
+receiving edit passes while another row still has masks. The test suite
+executes this exact block.
 
 <!-- editing-loop -->
 ```python
