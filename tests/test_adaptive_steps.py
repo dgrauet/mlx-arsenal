@@ -190,9 +190,19 @@ class TestValidation:
         with pytest.raises(ValueError):
             CurvatureAdaptiveStepper(**kwargs)
 
-    def test_scalar_velocity_raises(self):
-        with pytest.raises(ValueError):
-            CurvatureAdaptiveStepper(1.0).step(mx.array(1.0))
+    @pytest.mark.parametrize("shape", [(), (8,)])
+    def test_velocity_without_batch_axis_raises(self, shape):
+        # A flat (N,) vector would otherwise be read as N one-element samples.
+        with pytest.raises(ValueError, match="batch"):
+            CurvatureAdaptiveStepper(1.0).step(mx.ones(shape))
+
+    @pytest.mark.parametrize("mode", ["ot", "ov"])
+    def test_nan_velocity_raises(self, mode):
+        # A NaN step would leave t at NaN and `while not done` would never end.
+        s = CurvatureAdaptiveStepper(0.001, mode=mode)
+        s.step(mx.ones((1, 4)))
+        with pytest.raises(ValueError, match="NaN"):
+            s.step(mx.array([[1.0, float("nan"), 0.0, 1.0]]))
 
 
 def _load_recipe():

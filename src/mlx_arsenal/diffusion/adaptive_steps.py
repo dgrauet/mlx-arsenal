@@ -123,12 +123,15 @@ class CurvatureAdaptiveStepper:
         """Step size to take now from ``velocity`` (evaluated at :attr:`t`).
 
         Advances :attr:`t` by the returned value. ``velocity`` is
-        ``(B, ...)``; its shape must not change during a trajectory.
+        ``(B, ...)``; its shape must not change during a trajectory. A NaN
+        velocity raises ``ValueError`` (OT: from the step after it).
         """
         if self.done:
             raise RuntimeError("the trajectory is complete (t == 1); call reset() first")
-        if velocity.ndim < 1:
-            raise ValueError("velocity must have a leading batch axis")
+        if velocity.ndim < 2:
+            raise ValueError(
+                f"velocity must be (B, ...) with a leading batch axis, got shape {velocity.shape}"
+            )
         u = velocity.astype(mx.float32).reshape(velocity.shape[0], -1)
         prev = self._u_prev if self._u_prev is not None else self._m1
         if prev is not None and prev.shape != u.shape:
@@ -174,4 +177,6 @@ class CurvatureAdaptiveStepper:
     def _scaled_inverse(self, norms: mx.array) -> float:
         """``scale / norm`` for the largest per-sample norm (the smallest step)."""
         largest = item_float(mx.max(norms))
+        if math.isnan(largest):
+            raise ValueError("velocity contains NaN")
         return math.inf if largest == 0.0 else self.scale / largest
