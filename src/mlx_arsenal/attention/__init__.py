@@ -4,7 +4,7 @@ from mlx_arsenal.attention.compensation import (
     select_probe_rows,
     tile_labels,
 )
-from mlx_arsenal.attention.dynamic_masks import antidiagonal_block_scores
+from mlx_arsenal.attention.dynamic_masks import antidiagonal_block_scores, top_p_block_mask
 from mlx_arsenal.attention.masks import block_causal_mask, causal_mask, sliding_window_mask
 from mlx_arsenal.attention.permute import (
     block_contiguous_permutation,
@@ -49,5 +49,6 @@ __all__ = [
     "spatial_only_mask",
     "temporal_only_mask",
     "tile_labels",
+    "top_p_block_mask",
     "vertical_stripe_mask",
 ]

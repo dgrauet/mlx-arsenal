@@ -92,3 +92,56 @@ def antidiagonal_block_scores(
     t = block_size // S
     tiles = probs.reshape(B, H, Nq // block_size, t, Nk // block_size, t).sum(axis=(3, 5))
     return tiles / t
+
+
+def top_p_block_mask(scores: mx.array, threshold: float | mx.array) -> mx.array:
+    """Keep, per query block, the key blocks covering a fraction ``τ`` of the mass.
+
+    Key blocks are ranked by score (descending, stable: lower index first on
+    ties) and a block is kept while the mass ranked *before* it is below
+    ``τ · row_total`` — so the block crossing the threshold is kept, and every
+    row keeps at least one block (also when a row is all zeros). This is
+    XAttention's non-causal selection rule, except that XAttention's scatter
+    also re-marks key block 0 in every row as a side effect; this function
+    keeps only the top-p set.
+
+    ``threshold`` may be one value per head, e.g. the per-head table produced
+    by an offline calibration such as HEART's EBC.
+
+    Args:
+        scores: ``(B, H, Cq, Ck)`` non-negative block scores, e.g. from
+            :func:`antidiagonal_block_scores`.
+        threshold: ``τ`` in ``(0, 1]``, or an ``(H,)`` array of per-head
+            values in ``(0, 1]``.
+
+    Returns:
+        ``(B, H, Cq, Ck)`` float32 additive mask: ``0`` for kept blocks,
+        ``-inf`` for skipped ones. For token-level attention without
+        compensation, expand it with ``mx.repeat`` along the last two axes
+        by ``block_size``.
+    """
+    if scores.ndim != 4:
+        raise ValueError(f"scores must have rank 4 (B, H, Cq, Ck), got shape {tuple(scores.shape)}")
+    H = scores.shape[1]
+    if isinstance(threshold, mx.array):
+        if tuple(threshold.shape) != (H,):
+            raise ValueError(
+                f"threshold array must have shape ({H},), got {tuple(threshold.shape)}"
+            )
+        tau = threshold.astype(mx.float32)
+        if not mx.all(mx.logical_and(tau > 0, tau <= 1)).item():
+            raise ValueError("threshold values must be in (0, 1]")
+        tau = tau.reshape(1, H, 1, 1)
+    else:
+        if not 0 < threshold <= 1:
+            raise ValueError(f"threshold must be in (0, 1], got {threshold}")
+        tau = mx.array(threshold, dtype=mx.float32)
+
+    s = scores.astype(mx.float32)
+    order = mx.argsort(-s, axis=-1)
+    ranked = mx.take_along_axis(s, order, axis=-1)
+    before = mx.cumsum(ranked, axis=-1) - ranked
+    total = mx.sum(s, axis=-1, keepdims=True)
+    keep_ranked = mx.logical_or(before < tau * total, mx.arange(s.shape[-1]) == 0)
+    keep = mx.take_along_axis(keep_ranked, mx.argsort(order, axis=-1), axis=-1)
+    return mx.where(keep, 0.0, float("-inf")).astype(mx.float32)

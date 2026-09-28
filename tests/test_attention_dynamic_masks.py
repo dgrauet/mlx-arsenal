@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 
 from mlx_arsenal._typing import array_from_any
-from mlx_arsenal.attention import antidiagonal_block_scores
+from mlx_arsenal.attention import (
+    antidiagonal_block_scores,
+    centroid_compensated_attention,
+    top_p_block_mask,
+)
 
 
 def _qk(B: int, H: int, Nq: int, Nk: int, D: int, seed: int) -> tuple[mx.array, mx.array]:
@@ -15,6 +19,21 @@ def _qk(B: int, H: int, Nq: int, Nk: int, D: int, seed: int) -> tuple[mx.array, 
     q = array_from_any(rng.normal(size=(B, H, Nq, D)).astype(np.float32))
     k = array_from_any(rng.normal(size=(B, H, Nk, D)).astype(np.float32))
     return q, k
+
+
+def _top_p_reference(scores: np.ndarray, tau: np.ndarray) -> np.ndarray:
+    """XAttention non-causal rule: keep a block while the mass ranked before it < tau * total."""
+    B, H, Cq, Ck = scores.shape
+    keep = np.zeros(scores.shape, dtype=bool)
+    for b in range(B):
+        for h in range(H):
+            for i in range(Cq):
+                row = scores[b, h, i].astype(np.float64)
+                order = np.argsort(-row, kind="stable")
+                before = np.concatenate([[0.0], np.cumsum(row[order])[:-1]])
+                kept = order[before < tau[h] * row.sum()]
+                keep[b, h, i, kept if kept.size else order[:1]] = True
+    return keep
 
 
 def _brute_force_scores(q, k, block_size: int, stride: int, scale: float) -> np.ndarray:
@@ -92,3 +111,70 @@ class TestAntidiagonalBlockScores:
             antidiagonal_block_scores(q, k, block_size=0, stride=1)
         with pytest.raises(ValueError, match="stride"):
             antidiagonal_block_scores(q, k, block_size=8, stride=0)
+
+
+class TestTopPBlockMask:
+    def _scores(self, seed: int, shape=(2, 3, 4, 6)) -> mx.array:
+        rng = np.random.default_rng(seed)
+        raw = rng.random(shape) ** 3  # skewed, like attention mass
+        return array_from_any((raw / raw.sum(axis=-1, keepdims=True)).astype(np.float32))
+
+    @pytest.mark.parametrize("tau", [0.3, 0.5, 0.9, 0.99])
+    def test_matches_reference(self, tau):
+        scores = self._scores(10)
+        out = top_p_block_mask(scores, tau)
+        ref = _top_p_reference(np.array(scores), np.full(3, tau))
+        assert out.dtype == mx.float32
+        assert np.array_equal(np.array(out) == 0.0, ref)
+        assert np.isneginf(np.array(out)[~ref]).all()
+
+    def test_per_head_thresholds(self):
+        scores = self._scores(11)
+        tau = mx.array([0.2, 0.6, 0.95])
+        out = top_p_block_mask(scores, tau)
+        ref = _top_p_reference(np.array(scores), np.array(tau))
+        assert np.array_equal(np.array(out) == 0.0, ref)
+        kept = np.array(mx.sum(out == 0.0, axis=(0, 2, 3)))
+        assert kept[0] < kept[1] < kept[2]
+
+    def test_kept_mass_reaches_threshold(self):
+        scores = self._scores(12)
+        out = top_p_block_mask(scores, 0.8)
+        kept_mass = mx.sum(mx.where(out == 0.0, scores, 0.0), axis=-1)
+        assert mx.all(kept_mass >= 0.8 - 1e-6).item()
+
+    def test_zero_row_keeps_one(self):
+        scores = mx.zeros((1, 1, 2, 4))
+        out = top_p_block_mask(scores, 0.9)
+        assert not mx.any(mx.isnan(out)).item()
+        assert np.array(mx.sum(out == 0.0, axis=-1)).tolist() == [[[1, 1]]]
+
+    def test_block_zero_is_not_forced(self):
+        # XAttention's scatter always re-marks key block 0; we keep only the top-p set.
+        scores = mx.array([[[[0.01, 0.9, 0.09]]]])
+        assert (np.array(top_p_block_mask(scores, 0.5)) == 0.0).tolist() == [
+            [[[False, True, False]]]
+        ]
+
+    def test_full_threshold_with_compensation_equals_dense(self):
+        q, k = _qk(1, 2, 32, 32, 8, 13)
+        v = _qk(1, 2, 32, 32, 8, 14)[0]
+        bm = top_p_block_mask(antidiagonal_block_scores(q, k, block_size=8, stride=4), 1.0)
+        labels = mx.arange(32) // 8
+        out = centroid_compensated_attention(
+            q, k, v, q_labels=labels, k_labels=labels, block_mask=bm
+        )
+        dense = mx.fast.scaled_dot_product_attention(q, k, v, scale=1.0 / math.sqrt(8))
+        assert mx.allclose(out, dense, atol=1e-5).item()
+
+    def test_validation(self):
+        scores = self._scores(15)
+        with pytest.raises(ValueError, match="rank 4"):
+            top_p_block_mask(scores[0], 0.9)
+        for bad in (0.0, 1.5, -0.1):
+            with pytest.raises(ValueError, match="threshold"):
+                top_p_block_mask(scores, bad)
+        with pytest.raises(ValueError, match="threshold"):
+            top_p_block_mask(scores, mx.array([0.9, 0.9]))
+        with pytest.raises(ValueError, match="threshold"):
+            top_p_block_mask(scores, mx.array([0.9, 0.0, 0.9]))
