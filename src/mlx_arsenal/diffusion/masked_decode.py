@@ -26,6 +26,7 @@ from typing import NamedTuple
 import mlx.core as mx
 import numpy as np
 
+from .._permutation import invert_permutation_last_axis
 from .._typing import item_int
 
 
@@ -148,8 +149,7 @@ def _rank(scores: mx.array, candidates: mx.array, *, descending: bool) -> mx.arr
         key = -key
     key = mx.nan_to_num(key, nan=big, posinf=big, neginf=-big)
     key = mx.where(candidates, key, float("inf"))
-    order = mx.argsort(key, axis=-1)
-    return mx.argsort(order, axis=-1)
+    return invert_permutation_last_axis(mx.argsort(key, axis=-1))
 
 
 def threshold_transfer(
@@ -303,7 +303,8 @@ def entropy_bound_transfer(entropy: mx.array, candidates: mx.array, bound: float
         raise ValueError(f"bound must be >= 0, got {bound}")
     filled = mx.where(candidates, entropy.astype(mx.float32), 0.0)
     rank = _rank(entropy, candidates, descending=False)
-    sorted_ent = mx.take_along_axis(filled, mx.argsort(rank, axis=-1), axis=-1)
+    order = invert_permutation_last_axis(rank)  # rank's inverse is the sort order
+    sorted_ent = mx.take_along_axis(filled, order, axis=-1)
     before = mx.cumsum(sorted_ent, axis=-1) - sorted_ent
     first = mx.arange(entropy.shape[-1]) == 0  # always commits, even with an inf entropy
     admissible = mx.logical_or(before <= bound, first)
