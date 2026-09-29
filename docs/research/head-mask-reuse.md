@@ -101,6 +101,17 @@ attention.
 These functions are quality tools and a reference for a future kernel: they
 let a port measure what dynamic sparsity and mask reuse cost in quality.
 
+To actually skip blocks, a port can hand the mask to a third-party Metal
+block-sparse kernel such as [mlx-mfa](https://pypi.org/project/mlx-mfa/)
+through its own adapter. `mlx-arsenal` does not depend on it (a single
+maintainer, pinned to `mlx <= 0.32.2` as of September 2026).
+
+**Reuse needs a fixed token grid.** A cached mask indexes blocks of a given
+token layout. When the grid changes (resolution or aspect ratio, a new clip
+or segment, a scale change in autoregressive video) the important key blocks
+move and a reused mask is wrong; SparSTAR (arXiv 2608.10519 v3) finds exactly
+this across scales. Reset `HeadMaskCache` whenever the grid changes.
+
 ## Deviations from the papers
 
 - **Normalized scores.** `antidiagonal_block_scores` divides each row by its
