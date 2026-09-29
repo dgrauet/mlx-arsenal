@@ -115,6 +115,8 @@ class TestValidation:
         [
             {"signal_scale": -0.1, "noise_scale": 0.5},
             {"signal_scale": 0.5, "noise_scale": -0.1},
+            {"signal_scale": float("nan"), "noise_scale": 0.5},
+            {"signal_scale": 0.5, "noise_scale": float("nan")},
             {"signal_scale": 0.5, "noise_scale": 0.5, "power_exp": 0.0},
             {"signal_scale": 0.5, "noise_scale": 0.5, "eps": 0.0},
             {"signal_scale": 0.5, "noise_scale": 0.5, "axes": ()},
