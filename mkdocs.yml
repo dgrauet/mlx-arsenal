@@ -93,3 +93,4 @@ nav:
       - "Research: adaptive tiling (SPADE)": research/adaptive-tiling.md
       - "Research: SeaCache spectral distance": research/seacache.md
       - "Research: adaptive flow steps (CAT-Flow)": research/adaptive-flow-steps.md
+      - "Research: posterior-mean-capped guidance (PMC-CFG)": research/posterior-mean-cfg.md

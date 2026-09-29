@@ -9,6 +9,7 @@ from .cfg_skip import (
     cfg_skip_mask,
 )
 from .ddim import DDIMScheduler
+from .guidance import posterior_mean_capped_guidance
 from .mask_reuse import HeadMaskCache, pooled_qk, qk_drift
 from .masked_decode import (
     TokenStats,
@@ -68,6 +69,7 @@ __all__ = [
     "get_timestep_embedding",
     "linear_temperature",
     "pooled_qk",
+    "posterior_mean_capped_guidance",
     "qk_drift",
     "renoise",
     "sea_filter",
