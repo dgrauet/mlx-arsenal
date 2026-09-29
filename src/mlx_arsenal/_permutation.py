@@ -9,8 +9,9 @@ def invert_permutation_last_axis(perm: mx.array) -> mx.array:
     """Inverse of the permutations along the last axis, as int32.
 
     Equal to ``mx.argsort(perm, axis=-1)`` for valid permutations, but a
-    scatter (``inv[perm[i]] = i``) instead of a second sort: 4-5x faster on
-    MLX 0.32 (the mlx-lm #1825 pattern). ``perm`` is not validated.
+    scatter (``inv[perm[i]] = i``) instead of a second sort (the mlx-lm #1825
+    pattern): about 4-5x faster on MLX 0.32.2 for rows of 1k-262k entries.
+    ``perm`` is not validated — only pass sort orders or their inverses.
     """
     if perm.ndim < 1:
         raise ValueError("perm must have at least one axis")

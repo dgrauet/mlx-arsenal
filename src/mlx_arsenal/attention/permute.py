@@ -56,7 +56,7 @@ def block_contiguous_permutation(
 def invert_permutation(perm: mx.array) -> mx.array:
     """Compute the inverse of a 1D permutation.
 
-    Equivalent to ``mx.argsort(perm)``, computed by a scatter. Caller is responsible for ensuring
+    Equivalent to ``mx.argsort(perm)``. Caller is responsible for ensuring
     ``perm`` is a valid permutation of ``[0, S)``; misuse silently produces
     wrong results.
 
@@ -68,4 +68,5 @@ def invert_permutation(perm: mx.array) -> mx.array:
     """
     if perm.ndim != 1:
         raise ValueError(f"perm must be 1D, got shape {perm.shape}")
-    return invert_permutation_last_axis(perm)
+    # argsort, not the internal scatter: invalid input still yields a permutation.
+    return mx.argsort(perm).astype(mx.int32)
