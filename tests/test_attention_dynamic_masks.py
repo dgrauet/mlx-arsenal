@@ -520,6 +520,21 @@ class TestRadiusBoundedBlockScores:
         assert keep_b[3] == -np.inf
         assert keep_r[3] == 0.0
 
+    def test_equal_quantiles_rescue_only_wider_blocks(self):
+        # Fifteen blocks share one radius, one is wider: the 0.5 and 0.9 radius
+        # quantiles coincide, so beta is 1 for the wide block and 0 elsewhere.
+        D, bs = 4, 4
+        pattern = np.array([[1, 0, 0, 0], [-1, 0, 0, 0], [0, 1, 0, 0], [0, -1, 0, 0]], np.float32)
+        k = np.tile(pattern, (16, 1))[None, None].copy()
+        k[0, 0, 5 * bs : 6 * bs] *= 3.0
+        q = np.ones((1, 1, bs, D), np.float32)
+        base, rescue = radius_bounded_block_scores(
+            array_from_any(q), array_from_any(k), block_size=bs
+        )
+        gap = np.array(rescue - base)[0, 0, 0]
+        assert gap[5] > 0.5
+        np.testing.assert_allclose(np.delete(gap, 5), 0.0, atol=1e-6)
+
     def test_bf16_inputs(self):
         q, k = self._qk(3)
         b16, r16 = radius_bounded_block_scores(

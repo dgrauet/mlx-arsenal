@@ -21,6 +21,11 @@ The masks are block-level and additive, consumable as ``block_mask`` by
 :func:`~mlx_arsenal.attention.centroid_compensated_attention` with
 ``labels = mx.arange(N) // block_size``. For reuse across denoising steps
 see :class:`mlx_arsenal.diffusion.HeadMaskCache`.
+
+RBS-Attention (Song et al., arXiv 2609.20971) guards centroid estimates
+against mean dilution: :func:`radius_bounded_block_scores` (centroid and
+radius-bounded log scores) and :func:`relative_block_mask` (keep blocks
+within ``α`` of the row maximum).
 """
 
 from __future__ import annotations
@@ -348,8 +353,15 @@ def radius_bounded_block_scores(
     branch and take the union (``mx.maximum`` of the additive masks), plus any
     forced blocks (sinks, diagonal band).
 
-    Unlike the other estimators it scores every query token (an
-    ``Nq × Nk / block_size`` matmul): cheaper than ``QKᵀ`` by ``block_size``.
+    ``β_b`` is 1 above ``r_high`` and 0 below ``r_low``; when the two
+    quantiles coincide it is ``1`` for blocks strictly wider than ``r_low``.
+
+    Unlike the other estimators it scores every query token: an
+    ``Nq × Nk / block_size`` matmul, cheaper than ``QKᵀ`` by ``block_size``
+    in FLOPs, but it holds about three ``(B, H, Nq, Nk / block_size)``
+    float32 tensors at once — ≈1.1 GB per head for a Wan 720p layer
+    (``N ≈ 75.8k``, ``block_size = 64``). Call it per head (or per group of
+    heads) at video scale.
 
     Args:
         q: ``(B, H, Nq, D)`` queries in block order.
@@ -360,7 +372,9 @@ def radius_bounded_block_scores(
 
     Returns:
         ``(base, rescue)``, each ``(B, H, Nq // block_size, Nk // block_size)``
-        float32 log scores.
+        float32 **log** scores. Use them with :func:`relative_block_mask` or
+        :func:`top_k_block_mask` (order-only); :func:`top_p_block_mask` needs
+        masses, i.e. ``mx.softmax(scores, axis=-1)`` first.
     """
     if q.ndim != 4 or k.ndim != 4:
         raise ValueError(f"q and k must have rank 4, got {q.ndim} and {k.ndim}")
@@ -387,16 +401,16 @@ def radius_bounded_block_scores(
         mx.clip((radius - r_low) / mx.where(span > 0, span, 1.0), 0.0, 1.0),
         (radius > r_low).astype(mx.float32),
     )
-    qf = q.astype(mx.float32)
-    scale = 1.0 / math.sqrt(D)
-    dot = qf @ centroid.swapaxes(-1, -2)  # (B, H, Nq, Ck)
-    bound = mx.linalg.norm(qf, axis=-1, keepdims=True) * (radius * beta)[:, :, None, :]
+    qf = q.astype(mx.float32) * (1.0 / math.sqrt(D))  # scale once: the bound's ‖q‖ inherits it
+    dot = qf @ centroid.swapaxes(-1, -2)  # (B, H, Nq, Ck) base logits
     Cq, Ck = Nq // block_size, Nk // block_size
 
     def pool(logits: mx.array) -> mx.array:
         return mx.logsumexp(logits.reshape(B, H, Cq, block_size, Ck), axis=3)
 
-    return pool(dot * scale), pool((dot + bound) * scale)
+    base = pool(dot)
+    bound = mx.linalg.norm(qf, axis=-1, keepdims=True) * (radius * beta)[:, :, None, :]
+    return base, pool(dot + bound)
 
 
 def relative_block_mask(log_scores: mx.array, alpha: float) -> mx.array:
@@ -407,6 +421,11 @@ def relative_block_mask(log_scores: mx.array, alpha: float) -> mx.array:
     ``log S_b ≥ max_b' log S_b' + log α``. The paper applies it to each branch
     separately (``α = 0.22`` base, ``0.18`` rescue, tuned offline on LLM
     prompts) and unions the masks with ``mx.maximum``.
+
+    Scores must be in the log domain (RBS, or logit-like estimates such as
+    :func:`minmax_block_scores`); take ``mx.log`` of mass estimates such as
+    :func:`antidiagonal_block_scores` first. A row whose scores are all equal
+    (including all ``-inf``) keeps every block; a NaN row keeps none.
 
     Args:
         log_scores: ``(B, H, Cq, Ck)`` log block scores.
