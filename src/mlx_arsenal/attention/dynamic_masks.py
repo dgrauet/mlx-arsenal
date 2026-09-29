@@ -30,6 +30,7 @@ from collections.abc import Sequence
 
 import mlx.core as mx
 
+from mlx_arsenal._permutation import invert_permutation_last_axis
 from mlx_arsenal.attention.compensation import tile_labels
 
 
@@ -164,7 +165,7 @@ def top_p_block_mask(scores: mx.array, threshold: float | mx.array) -> mx.array:
     before = mx.cumsum(ranked, axis=-1) - ranked
     total = mx.sum(s, axis=-1, keepdims=True)
     keep_ranked = mx.logical_or(before < tau * total, mx.arange(s.shape[-1]) == 0)
-    keep = mx.take_along_axis(keep_ranked, mx.argsort(order, axis=-1), axis=-1)
+    keep = mx.put_along_axis(mx.zeros(s.shape, dtype=mx.bool_), order, keep_ranked, axis=-1)
     return mx.where(keep, 0.0, float("-inf")).astype(mx.float32)
 
 
@@ -307,5 +308,5 @@ def top_k_block_mask(scores: mx.array, k: int) -> mx.array:
         raise ValueError(f"scores must have rank 4 (B, H, Cq, Ck), got shape {tuple(scores.shape)}")
     if k < 1:
         raise ValueError(f"k must be >= 1, got {k}")
-    rank = mx.argsort(mx.argsort(-scores.astype(mx.float32), axis=-1), axis=-1)
+    rank = invert_permutation_last_axis(mx.argsort(-scores.astype(mx.float32), axis=-1))
     return mx.where(rank < k, 0.0, float("-inf")).astype(mx.float32)

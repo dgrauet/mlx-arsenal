@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import mlx.core as mx
 
+from mlx_arsenal._permutation import invert_permutation_last_axis
+
 
 def block_contiguous_permutation(
     scores: mx.array,
@@ -47,7 +49,7 @@ def block_contiguous_permutation(
     if descending:
         keys = -keys
     perm = mx.argsort(keys).astype(mx.int32)
-    inv_perm = mx.argsort(perm).astype(mx.int32)
+    inv_perm = invert_permutation_last_axis(perm)
     return perm, inv_perm
 
 
@@ -66,4 +68,5 @@ def invert_permutation(perm: mx.array) -> mx.array:
     """
     if perm.ndim != 1:
         raise ValueError(f"perm must be 1D, got shape {perm.shape}")
+    # argsort, not the internal scatter: invalid input still yields a permutation.
     return mx.argsort(perm).astype(mx.int32)
