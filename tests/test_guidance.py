@@ -47,7 +47,7 @@ def call(x, vc, vu, scale, sigma, cap):
 
 
 class TestReferenceParity:
-    @pytest.mark.parametrize("cap", [0.9, 1.0, 1.05, 1.1, 1.5])
+    @pytest.mark.parametrize("cap", [1.0, 1.05, 1.1, 1.5])
     @pytest.mark.parametrize("sigma", [0.1, 0.5, 0.9])
     def test_matches_appendix_d4(self, cap, sigma):
         x, vc, vu = data()
@@ -69,13 +69,21 @@ class TestReferenceParity:
         )
         np.testing.assert_allclose(got, reference(vc, vu, 5.0, x, sig, 1.05), atol=1e-4, rtol=1e-4)
 
-    def test_discriminant_negative_gives_conditional(self):
-        # cap < 1 with m_c orthogonal to the gap: no beta >= 0 is feasible.
-        x = np.zeros((1, 4), np.float32)
-        vc = np.array([[-1.0, 0, 0, 0]], np.float32)  # m_c = (s, 0, 0, 0) with s = sigma
-        vu = np.array([[-1.0, -1.0, 0, 0]], np.float32)  # gap along axis 1
-        got = call(x, vc, vu, 5.0, 0.5, 0.5)
-        np.testing.assert_allclose(got, vc, atol=1e-6)
+    def test_zero_d_and_numpy_sigma(self):
+        x, vc, vu = data(10)
+        ref = reference(vc, vu, 5.0, x, 0.4, 1.05)
+        for sig in (mx.array(0.4), np.float32(0.4), np.array(0.4)):
+            got = np.array(
+                posterior_mean_capped_guidance(
+                    array_from_any(vc),
+                    array_from_any(vu),
+                    5.0,
+                    x=array_from_any(x),
+                    sigma=sig,
+                    cap=1.05,
+                )
+            )
+            np.testing.assert_allclose(got, ref, atol=1e-4, rtol=1e-4)
 
 
 class TestProperties:
@@ -88,6 +96,19 @@ class TestProperties:
             m = x[i] - sigma * v[i]
             mc = x[i] - sigma * vc[i]
             assert np.linalg.norm(m) <= cap * np.linalg.norm(mc) * (1 + 1e-4)
+
+    def test_binding_cap_is_tight(self):
+        # When the cap binds, beta lies strictly inside (0, scale - 1) and the
+        # guided posterior mean sits exactly on the cap.
+        x, vc, vu = data(2)
+        sigma, cap, scale = 0.5, 1.05, 7.0
+        v = call(x, vc, vu, scale, sigma, cap)
+        for i in range(x.shape[0]):
+            d = vc[i] - vu[i]
+            beta = float(((v[i] - vc[i]) * d).sum() / (d * d).sum())
+            assert 0.1 < beta < scale - 1 - 0.1
+            m, mc = x[i] - sigma * v[i], x[i] - sigma * vc[i]
+            assert np.linalg.norm(m) == pytest.approx(cap * np.linalg.norm(mc), rel=1e-4)
 
     def test_loose_cap_is_plain_cfg(self):
         x, vc, vu = data(3)
@@ -162,6 +183,9 @@ class TestValidation:
         [
             {"scale": 0.5},
             {"cap": 0.0},
+            {"cap": 0.99},
+            {"sigma": mx.array([0.5, 1.5, 0.5])},
+            {"sigma": mx.array(-0.1)},
             {"sigma": -0.1},
             {"sigma": 1.5},
             {"uncond": mx.zeros((3, 8, 6, 5))},
