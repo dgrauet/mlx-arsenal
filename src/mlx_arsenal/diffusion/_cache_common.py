@@ -50,7 +50,8 @@ class RelL1State:
 
     def seed(self, x: mx.array) -> None:
         self._prev_input = x
-        self._prev_summary = item_float(mx.mean(mx.abs(x)))
+        # float32: a bf16 / fp16 reduction rounds its result to the input dtype.
+        self._prev_summary = item_float(mx.mean(mx.abs(x.astype(mx.float32))))
 
     def delta(self, x: mx.array) -> float | None:
         prev = self._prev_input
@@ -60,6 +61,7 @@ class RelL1State:
         if prev_summary == 0.0:
             self.seed(x)
             return None
-        d = item_float(mx.mean(mx.abs(x - prev))) / prev_summary
+        diff = x.astype(mx.float32) - prev.astype(mx.float32)
+        d = item_float(mx.mean(mx.abs(diff))) / prev_summary
         self.seed(x)
         return d

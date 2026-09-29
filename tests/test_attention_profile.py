@@ -200,3 +200,20 @@ class TestClassifyHeadsFromQK:
         q_bad = q.reshape(2, S, D)
         with pytest.raises(ValueError):
             classify_heads_from_qk(q_bad, q_bad, T, H, W, n_samples=4)
+
+
+class TestLowPrecisionMass:
+    """MLX 0.32 axis reductions in bf16 saturate past ~2**19 elements per row.
+
+    ``classify_heads_from_probs`` sums S*S probabilities per (batch, head):
+    with bf16 probs that already happens at S = 2048.
+    """
+
+    def test_bf16_probs_mass_is_exact(self):
+        T, H, W = 2, 32, 32  # S = 2048, S * S = 4.2M elements per head
+        S = T * H * W
+        probs = mx.full((1, 1, S, S), 1.0 / S, dtype=mx.bfloat16)  # uniform attention
+        fr = classify_heads_from_probs(probs, T, H, W)
+        # Uniform: 1/T of the mass on same-frame keys, 1/(H*W) on same-position keys.
+        assert item_float(fr[0, 0]) == pytest.approx(1.0 / T, rel=1e-2)
+        assert item_float(fr[0, 1]) == pytest.approx(1.0 / (H * W), rel=1e-2)

@@ -62,6 +62,13 @@ Appendix G).
 Do not use it where bit-exact reproducibility is required. For creative
 generation, the trade-off is documented and acceptable.
 
+Keep the sampling state (latent, scheduler arithmetic) in float32 when
+caching, even if the transformer runs in bf16: reused or extrapolated
+features accumulate rounding across skipped steps. diffusers made float32
+sampling state its default alongside SeaCache
+([diffusers #14663](https://github.com/huggingface/diffusers/pull/14663),
+September 2026).
+
 ## Applicability to `mlx-arsenal`
 
 ### What is a *primitive* (extractable into the library)

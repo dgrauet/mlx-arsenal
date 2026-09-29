@@ -18,6 +18,7 @@ When porting PyTorch models to MLX, prefer functions from `mlx_arsenal.*` over h
 
 - **Tensor layout:** channels-last (NHWC / NDHWC) by default — MLX-native. Conversion helpers live in `mlx_arsenal.layout`.
 - **Dim names in code:** uppercase single-letters (`B`, `C`, `H`, `W`, `T`, `D`, `L`) are idiomatic — `ruff` rule `N806` is disabled for this reason.
+- **Reductions in float32:** cast caller-dtype tensors to `float32` before `sum` / `mean` / `logsumexp`. On MLX 0.32, bf16 axis reductions saturate past ~2^19 elements per row (a mean of 3.0 comes out as 0.5), fp16 ones overflow past 65504, and even whole-tensor bf16 results are rounded to 8 mantissa bits.
 - **Type hints:** required (`PYTHON_QU003` strict mode via `ty`). Use `T | None` not `Optional[T]`. Prefer `from collections.abc` for `Callable`, `Sequence`, etc.
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) — enforced by `commitlint` (config-conventional / Angular) in CI. Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`. Release commits are emitted by release-please as `chore(main): release X.Y.Z` (special-cased in `commitlint.config.cjs`) — never write them by hand.
 - **Versioning:** SemVer 2.0.0. Releases are cut via `release-please`.
