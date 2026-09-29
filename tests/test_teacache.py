@@ -227,3 +227,24 @@ class TestMaxConsecutiveSkips:
     def test_nonpositive_cap_raises(self, cap):
         with pytest.raises(ValueError, match="max_consecutive_skips"):
             self.make(cap)
+
+
+class TestLowPrecisionInputs:
+    def test_bf16_distance_is_computed_in_float32(self):
+        # bf16 reductions round their result to 8 mantissa bits (~0.4 %): the
+        # relative-L1 distance must match a float64 reference much closer.
+        import numpy as np
+
+        from mlx_arsenal.diffusion._cache_common import RelL1State
+
+        rng = np.random.default_rng(0)
+        a = rng.standard_normal((1, 4096, 64)).astype(np.float32)
+        b = a + 0.013 * rng.standard_normal(a.shape).astype(np.float32)
+        xa, xb = mx.array(a).astype(mx.bfloat16), mx.array(b).astype(mx.bfloat16)
+        ref_a = np.array(xa.astype(mx.float32), dtype=np.float64)
+        ref_b = np.array(xb.astype(mx.float32), dtype=np.float64)
+        expected = np.abs(ref_b - ref_a).mean() / np.abs(ref_a).mean()
+        state = RelL1State("unused")
+        state.seed(xa)
+        got = state.delta(xb)
+        assert got == pytest.approx(expected, rel=1e-5)

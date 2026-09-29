@@ -175,8 +175,10 @@ class VerifiedFeatureCache:
         """
         if predicted.shape != actual.shape:
             return False
-        diff_sq = item_float(mx.sum((predicted - actual) ** 2))
-        actual_sq = item_float(mx.sum(actual**2))
+        # float32: a bf16 / fp16 reduction rounds its result to the input dtype.
+        p32, a32 = predicted.astype(mx.float32), actual.astype(mx.float32)
+        diff_sq = item_float(mx.sum((p32 - a32) ** 2))
+        actual_sq = item_float(mx.sum(a32**2))
         error = diff_sq / (actual_sq + self.epsilon)
         return error <= self.threshold(step_index)
 

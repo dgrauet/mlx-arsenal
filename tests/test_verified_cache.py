@@ -257,3 +257,23 @@ class TestShapeChange:
         # The documented loop then records the computed feature and restarts.
         c.record(3, actual)
         assert c.can_predict(4) is False
+
+
+class TestLowPrecisionAccept:
+    def test_bf16_error_is_computed_in_float32(self):
+        # Error just below the threshold in exact arithmetic; bf16-rounded sums
+        # (~0.4 % off) must not flip the decision.
+        import numpy as np
+
+        rng = np.random.default_rng(1)
+        actual = mx.array(rng.standard_normal((8, 4096)).astype(np.float32)).astype(mx.bfloat16)
+        predicted = (
+            actual + 0.1 * mx.array(rng.standard_normal((8, 4096)).astype(np.float32))
+        ).astype(mx.bfloat16)
+        a64 = np.array(actual.astype(mx.float32), dtype=np.float64)
+        p64 = np.array(predicted.astype(mx.float32), dtype=np.float64)
+        err = ((p64 - a64) ** 2).sum() / (a64**2).sum()
+        below = VerifiedFeatureCache(num_steps=10, tau_0=float(err * 1.0005), beta=1.0)
+        above = VerifiedFeatureCache(num_steps=10, tau_0=float(err * 0.9995), beta=1.0)
+        assert below.accept(3, predicted, actual) is True
+        assert above.accept(3, predicted, actual) is False
