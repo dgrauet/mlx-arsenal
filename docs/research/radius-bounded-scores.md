@@ -70,6 +70,37 @@ Expand it to tokens with `mx.repeat` on both block axes, or pass it as
 `block_mask` to `centroid_compensated_attention` with
 `labels = mx.arange(N) // block_size`.
 
+## Measured on ERNIE-Image (MLX)
+
+Image-image attention of ERNIE-Image SFT (MLX port, int8) at 1024² (a 64 × 64
+token grid), step 10 of 28 (`σ ≈ 0.84`), five layers × 32 heads,
+`block_size = 64`, tokens in raster order or regrouped into 8 × 8 tiles
+(`tile_labels`). Recall is the true attention mass (dense softmax) captured
+by the kept blocks, averaged over query blocks.
+
+Estimators ranked by recall with `top_k_block_mask`, raster / tiled order:
+
+| Kept blocks | oracle | antidiagonal (XAttention) | centroid (RBS base) | min/max (SPADE) | RBS rescue alone |
+|---|---|---|---|---|---|
+| 5 % | .475 / .586 | .460 / .545 | .444 / .533 | .424 / .498 | .103 / .107 |
+| 10 % | .606 / .705 | .591 / .671 | .568 / .660 | .548 / .636 | .144 / .150 |
+| 20 % | .744 / .817 | .728 / .791 | .703 / .781 | .685 / .767 | .237 / .248 |
+
+The rescue score is not a ranking on its own: it only makes sense in the
+union. RBS's union at the paper's thresholds (`0.22` / `0.18`) against the
+base branch alone with its threshold lowered to the same density:
+
+| Order | union density | union recall | base-only recall, same density |
+|---|---|---|---|
+| raster | .266 | .772 | .799 (union −2.7 points) |
+| 8 × 8 tiles | .165 | .699 | .728 (union −2.9 points) |
+
+The union loses on every one of the five layers. On this DiT, mean dilution
+does not show up: the rescue branch spends the budget on spread-out key
+blocks that carry little mass. Keep the base branch and tune its threshold,
+or use XAttention's estimate, unless a model shows the dilution the paper
+measured on long-context LLMs.
+
 ## Deviations and notes
 
 - **Memory.** The estimator scores every query token: about three
