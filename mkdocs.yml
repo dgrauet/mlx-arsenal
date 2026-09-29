@@ -91,6 +91,7 @@ nav:
       - "Research: dLLM block decoding": research/dllm-block-decoding.md
       - "Research: dynamic masks and head-wise reuse": research/head-mask-reuse.md
       - "Research: adaptive tiling (SPADE)": research/adaptive-tiling.md
+      - "Research: radius-bounded block scores (RBS)": research/radius-bounded-scores.md
       - "Research: SeaCache spectral distance": research/seacache.md
       - "Research: adaptive flow steps (CAT-Flow)": research/adaptive-flow-steps.md
       - "Research: posterior-mean-capped guidance (PMC-CFG)": research/posterior-mean-cfg.md
