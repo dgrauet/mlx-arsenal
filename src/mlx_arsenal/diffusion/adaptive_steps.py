@@ -43,7 +43,9 @@ class CurvatureAdaptiveStepper:
 
     Each step size is clipped to ``[dt_min, min(dt_max, 1 − t)]``; the upper
     bound wins, so the last step lands exactly on ``t = 1``. A zero norm (no
-    curvature signal) gives the upper bound.
+    curvature signal) gives the upper bound. As in the paper, a step that
+    stops just short of 1 leaves a tiny last step, which still costs one
+    model evaluation.
 
     Batches share one timeline: norms are taken per sample over all non-batch
     axes and the smallest step wins (at batch 1 this is the paper's rule).
@@ -59,6 +61,8 @@ class CurvatureAdaptiveStepper:
             still updates; the paper uses 2 (FLUX.1-dev), 3 (SD3.5, Krea)
             or 0 (FLUX.1-schnell) because early velocities are unreliable.
         t_start: Initial time, e.g. for image-to-image starting mid-way.
+            The OV bias correction applies to the first step whatever
+            ``t_start`` is: it corrects the zero-initialised moments.
     """
 
     def __init__(

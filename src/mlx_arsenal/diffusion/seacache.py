@@ -82,7 +82,7 @@ def sea_filter(
     Returns:
         The filtered tensor, same shape and dtype as ``x``.
     """
-    if signal_scale < 0 or noise_scale < 0:
+    if not (signal_scale >= 0 and noise_scale >= 0):  # also rejects NaN
         raise ValueError(
             f"signal_scale and noise_scale must be >= 0, got {signal_scale}, {noise_scale}"
         )

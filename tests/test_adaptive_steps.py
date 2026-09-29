@@ -89,6 +89,31 @@ class TestAlgorithmParity:
         assert len(large) < len(small)
 
 
+class TestStateDetails:
+    def test_ot_differences_over_the_step_actually_taken(self):
+        # Step 1's raw dt (5.0) is clipped to dt_max = 0.05; the next acceleration
+        # must divide by the 0.05 that was taken, not by the raw 5.0.
+        s = CurvatureAdaptiveStepper(1.0, mode="ot", dt_max=0.05)
+        u0, u1 = mx.zeros((1, 4)), mx.full((1, 4), 0.001)
+        assert s.step(u0) == 0.01
+        assert s.step(u1) == 0.05
+        u2 = u1 + 1.0
+        expected = 1.0 / (np.linalg.norm(np.ones(4)) / 0.05)  # 0.025
+        assert s.step(u2) == pytest.approx(expected, rel=1e-6)
+
+    @pytest.mark.parametrize("t_start", [0.0, 0.5])
+    def test_ov_first_step_bias_correction(self, t_start):
+        # Keyed on the first step, not on t == 0, so it also applies from t_start.
+        lam, beta = 0.05, 0.3
+        scaled = (1 - t_start) * np.ones(4)
+        m2, m1 = (1 - beta) * scaled**2, (1 - beta) * scaled
+        raw = lam / math.sqrt(np.linalg.norm(m2 - m1**2))
+        s = CurvatureAdaptiveStepper(lam, beta=beta, t_start=t_start)
+        dt = s.step(mx.ones((1, 4)))
+        assert 0.01 < dt < 1 - t_start  # not masked by the clip
+        assert dt == pytest.approx(raw * math.sqrt(1 - beta), rel=1e-6)
+
+
 class TestTimeline:
     @pytest.mark.parametrize("mode", ["ot", "ov"])
     def test_lands_exactly_on_one(self, mode):

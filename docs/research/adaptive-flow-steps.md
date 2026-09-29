@@ -101,6 +101,8 @@ disappears. OV and OT need very different `λ` on this latent (131k values):
 - **Warm-up.** The paper describes "a few small fixed steps" outside its
   algorithms; `warmup_steps` forces `Δ_min` on the first steps while the
   state keeps updating (as the algorithms' loop would).
+- **Last step.** A step that stops just short of `t = 1` leaves a tiny
+  final step, which still costs a model evaluation (as in the paper).
 - **Euler only.** The paper evaluates Euler; nothing here assumes another
   solver.
 

@@ -40,9 +40,9 @@ from .verified_cache import VerifiedFeatureCache, geometric_threshold
 from .window_residual import WindowResidualController
 
 __all__ = [
-    "CurvatureAdaptiveStepper",
     "CFGSimilarityProfiler",
     "CFGSkipController",
+    "CurvatureAdaptiveStepper",
     "DDIMScheduler",
     "FlowMatchEulerDiscreteScheduler",
     "HeadMaskCache",
@@ -50,7 +50,6 @@ __all__ = [
     "PerLayerAttentionCache",
     "StableConfidentStopping",
     "TeaCacheController",
-    "sea_filter",
     "TimestepEmbedding",
     "TokenStats",
     "VerifiedFeatureCache",
@@ -71,6 +70,7 @@ __all__ = [
     "pooled_qk",
     "qk_drift",
     "renoise",
+    "sea_filter",
     "splice_heads",
     "threshold_transfer",
     "token_stats",

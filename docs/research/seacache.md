@@ -33,7 +33,7 @@ accumulation and the threshold are TeaCache's, without the polynomial.
 
 | API | Role |
 |---|---|
-| `sea_filter(x, signal_scale, noise_scale, *, axes, power_exp)` | the SEA filter on a channels-last grid |
+| `sea_filter(x, signal_scale, noise_scale, *, axes, power_exp, eps)` | the SEA filter on a channels-last grid |
 | `TeaCacheController(..., coefficients=None)` | TeaCache rule on the raw distance |
 | `TeaCacheController(..., max_consecutive_skips=2)` | the diffusers streak cap |
 
