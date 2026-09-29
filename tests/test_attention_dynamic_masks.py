@@ -15,6 +15,8 @@ from mlx_arsenal.attention import (
     block_self_similarity,
     centroid_compensated_attention,
     minmax_block_scores,
+    radius_bounded_block_scores,
+    relative_block_mask,
     select_tiling,
     tile_labels,
     top_k_block_mask,
@@ -435,3 +437,128 @@ class TestSpadeRecipe:
         q, k = _qk(2, 2, 64, 64, 8, 53)
         with pytest.raises(ValueError, match="batch"):
             spade(q, k, k, self.GRID, self.TILES)
+
+
+def _rbs_reference(q, k, bs, low=0.5, high=0.9):
+    """Transcription of RBS-Attention Algorithm 1 scores (float64), as log scores."""
+    B, H, Nq, D = q.shape
+    Ck = k.shape[2] // bs
+    base = np.zeros((B, H, Nq // bs, Ck))
+    rescue = np.zeros_like(base)
+    for b in range(B):
+        for h in range(H):
+            kb = k[b, h].astype(np.float64).reshape(Ck, bs, D)
+            c = kb.mean(1)
+            r = np.linalg.norm(kb - c[:, None], axis=-1).max(1)
+            r_lo, r_hi = np.quantile(r, low), np.quantile(r, high)
+            if r_hi > r_lo:
+                beta = np.clip((r - r_lo) / (r_hi - r_lo), 0, 1)
+            else:
+                beta = (r > r_lo).astype(np.float64)
+            qq = q[b, h].astype(np.float64)
+            lb = qq @ c.T / np.sqrt(D)
+            lr = (qq @ c.T + np.linalg.norm(qq, axis=-1, keepdims=True) * (r * beta)) / np.sqrt(D)
+            for i in range(Nq // bs):
+                for out, lg in ((base, lb), (rescue, lr)):
+                    blk = lg[i * bs : (i + 1) * bs]
+                    m = blk.max(0)
+                    out[b, h, i] = m + np.log(np.exp(blk - m).sum(0))
+    return base, rescue
+
+
+class TestRadiusBoundedBlockScores:
+    def _qk(self, seed=0, B=2, H=3, N=64, D=16):
+        rng = np.random.default_rng(seed)
+        return (rng.standard_normal((B, H, N, D)).astype(np.float32) for _ in range(2))
+
+    @pytest.mark.parametrize(("low", "high"), [(0.5, 0.9), (0.25, 0.75)])
+    def test_matches_algorithm_1(self, low, high):
+        q, k = self._qk()
+        base, rescue = radius_bounded_block_scores(
+            array_from_any(q), array_from_any(k), block_size=8, low=low, high=high
+        )
+        ref_b, ref_r = _rbs_reference(q, k, 8, low, high)
+        np.testing.assert_allclose(np.array(base), ref_b, atol=1e-4, rtol=1e-4)
+        np.testing.assert_allclose(np.array(rescue), ref_r, atol=1e-4, rtol=1e-4)
+
+    def test_full_rescue_bounds_the_true_block_score(self):
+        # Blocks with radius >= the `high` quantile get beta = 1: their rescue
+        # logit is the Cauchy-Schwarz upper bound of every key logit, so the
+        # block score bounds the one built from each query's best key.
+        q, k = self._qk(1, B=1, H=1)
+        _, rescue = radius_bounded_block_scores(
+            array_from_any(q), array_from_any(k), block_size=8, low=0.0, high=0.5
+        )
+        kb = k[0, 0].astype(np.float64).reshape(8, 8, 16)
+        r = np.linalg.norm(kb - kb.mean(1, keepdims=True), axis=-1).max(1)
+        full = r >= np.quantile(r, 0.5)
+        logits = q[0, 0].astype(np.float64) @ k[0, 0].astype(np.float64).T / 4.0  # sqrt(D)
+        best = logits.reshape(8, 8, 8, 8).max(axis=3)  # (Cq, tokens, Ck)
+        true = np.log(np.exp(best).sum(axis=1))  # (Cq, Ck)
+        got = np.array(rescue)[0, 0]
+        assert full.sum() >= 4
+        assert np.all(got[:, full] >= true[:, full] - 1e-4)
+
+    def test_rescue_keeps_a_diluted_key(self):
+        # Key block 3 hides one key aligned with the queries among keys that
+        # cancel it on average: the centroid misses it, the radius bound does not.
+        D, bs = 8, 8
+        rng = np.random.default_rng(2)
+        q = np.tile(np.eye(D)[0] * 4.0, (1, 1, bs, 1)).astype(np.float32)
+        k = 0.05 * rng.standard_normal((1, 1, 8 * bs, D))
+        k[0, 0, 3 * bs] = np.eye(D)[0] * 6.0
+        k[0, 0, 3 * bs + 1 : 4 * bs, 0] = -6.0 / (bs - 1)
+        k[0, 0, 5 * bs : 6 * bs, 0] += 1.0  # a decoy: tight block, moderately aligned
+        k = k.astype(np.float32)
+        # The hidden key is the best match of every query (logit 4·6 vs 4·1).
+        assert (q[0, 0, 0] @ k[0, 0].T).argmax() == 3 * bs
+        base, rescue = radius_bounded_block_scores(
+            array_from_any(q), array_from_any(k), block_size=bs
+        )
+        keep_b = np.array(relative_block_mask(base, 0.5))[0, 0, 0]
+        keep_r = np.array(relative_block_mask(rescue, 0.5))[0, 0, 0]
+        assert keep_b[3] == -np.inf
+        assert keep_r[3] == 0.0
+
+    def test_bf16_inputs(self):
+        q, k = self._qk(3)
+        b16, r16 = radius_bounded_block_scores(
+            array_from_any(q).astype(mx.bfloat16),
+            array_from_any(k).astype(mx.bfloat16),
+            block_size=8,
+        )
+        assert b16.dtype == mx.float32 and r16.dtype == mx.float32
+
+    @pytest.mark.parametrize(
+        "kw",
+        [
+            {"block_size": 0},
+            {"block_size": 7},
+            {"block_size": 8, "low": 0.9, "high": 0.5},
+            {"block_size": 8, "low": -0.1},
+            {"block_size": 8, "high": 1.1},
+        ],
+    )
+    def test_validation(self, kw):
+        q, k = self._qk(4)
+        with pytest.raises(ValueError):
+            radius_bounded_block_scores(array_from_any(q), array_from_any(k), **kw)
+
+
+class TestRelativeBlockMask:
+    def test_keeps_scores_within_alpha_of_the_max(self):
+        rng = np.random.default_rng(5)
+        logs = rng.standard_normal((2, 3, 4, 10)).astype(np.float32)
+        out = np.array(relative_block_mask(array_from_any(logs), 0.22))
+        keep = logs >= logs.max(-1, keepdims=True) + np.log(0.22)
+        np.testing.assert_array_equal(out == 0.0, keep)
+        assert np.all(out[~keep] == -np.inf)
+
+    def test_alpha_one_keeps_the_max(self):
+        logs = mx.array([[[[0.0, 2.0, 1.0]]]])
+        assert np.array(relative_block_mask(logs, 1.0)).tolist() == [[[[-np.inf, 0.0, -np.inf]]]]
+
+    @pytest.mark.parametrize("alpha", [0.0, -0.5, 1.5])
+    def test_invalid_alpha(self, alpha):
+        with pytest.raises(ValueError):
+            relative_block_mask(mx.zeros((1, 1, 2, 3)), alpha)

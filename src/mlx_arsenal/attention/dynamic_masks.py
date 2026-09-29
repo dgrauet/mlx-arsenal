@@ -309,3 +309,118 @@ def top_k_block_mask(scores: mx.array, k: int) -> mx.array:
         raise ValueError(f"k must be >= 1, got {k}")
     rank = mx.argsort(mx.argsort(-scores.astype(mx.float32), axis=-1), axis=-1)
     return mx.where(rank < k, 0.0, float("-inf")).astype(mx.float32)
+
+
+def _quantile(x: mx.array, p: float) -> mx.array:
+    """Linear-interpolated quantile ``p`` along the last axis (numpy's default)."""
+    n = x.shape[-1]
+    s = mx.sort(x, axis=-1)
+    pos = p * (n - 1)
+    lo = math.floor(pos)
+    hi = min(lo + 1, n - 1)
+    frac = pos - lo
+    return s[..., lo] * (1.0 - frac) + s[..., hi] * frac
+
+
+def radius_bounded_block_scores(
+    q: mx.array,
+    k: mx.array,
+    *,
+    block_size: int,
+    low: float = 0.5,
+    high: float = 0.9,
+) -> tuple[mx.array, mx.array]:
+    """RBS-Attention block scores: centroid and radius-bounded ("rescue").
+
+    A block centroid ``c_b`` can hide one strongly matching key among keys that
+    cancel it ("mean dilution"). RBS (arXiv 2609.20971) adds the key block's
+    radius ``r_b = max ‖k − c_b‖₂``: by Cauchy-Schwarz
+    ``qᵀk ≤ qᵀc_b + ‖q‖·r_b`` for every key of the block. Per query token::
+
+        ℓ_base   = qᵀc_b / √D
+        ℓ_rescue = (qᵀc_b + ‖q‖·r_b·β_b) / √D
+
+    with ``β_b = clip((r_b − r_low) / (r_high − r_low), 0, 1)`` from the
+    ``low`` / ``high`` quantiles of the radii of each (batch, head), so only
+    unusually spread blocks get the bound. Each (query block, key block) score
+    is the logsumexp of the logits over the query block's tokens — the log of
+    the paper's ``Σ exp(ℓ)``. Select with :func:`relative_block_mask` per
+    branch and take the union (``mx.maximum`` of the additive masks), plus any
+    forced blocks (sinks, diagonal band).
+
+    Unlike the other estimators it scores every query token (an
+    ``Nq × Nk / block_size`` matmul): cheaper than ``QKᵀ`` by ``block_size``.
+
+    Args:
+        q: ``(B, H, Nq, D)`` queries in block order.
+        k: ``(B, H, Nk, D)`` keys in block order, same ``(B, H)``.
+        block_size: Tokens per block; ``Nq`` and ``Nk`` must be multiples.
+        low: Radius quantile below which ``β_b = 0`` (paper: 0.5).
+        high: Radius quantile above which ``β_b = 1`` (paper: 0.9).
+
+    Returns:
+        ``(base, rescue)``, each ``(B, H, Nq // block_size, Nk // block_size)``
+        float32 log scores.
+    """
+    if q.ndim != 4 or k.ndim != 4:
+        raise ValueError(f"q and k must have rank 4, got {q.ndim} and {k.ndim}")
+    if k.shape[:2] != q.shape[:2]:
+        raise ValueError(f"q and k must share (batch, heads), got {q.shape[:2]} and {k.shape[:2]}")
+    B, H, Nq, D = q.shape
+    Nk = k.shape[2]
+    if k.shape[3] != D:
+        raise ValueError(f"q and k head dim differ: {D} vs {k.shape[3]}")
+    if block_size < 1:
+        raise ValueError(f"block_size must be >= 1, got {block_size}")
+    if Nq % block_size or Nk % block_size:
+        raise ValueError(f"Nq ({Nq}) and Nk ({Nk}) must be a multiple of block_size ({block_size})")
+    if not 0.0 <= low < high <= 1.0:
+        raise ValueError(f"need 0 <= low < high <= 1, got low={low}, high={high}")
+    kb = k.astype(mx.float32).reshape(B, H, Nk // block_size, block_size, D)
+    centroid = mx.mean(kb, axis=3)  # (B, H, Ck, D)
+    radius = mx.max(mx.linalg.norm(kb - centroid[:, :, :, None], axis=-1), axis=-1)  # (B, H, Ck)
+    r_low = _quantile(radius, low)[..., None]
+    r_high = _quantile(radius, high)[..., None]
+    span = r_high - r_low
+    beta = mx.where(
+        span > 0,
+        mx.clip((radius - r_low) / mx.where(span > 0, span, 1.0), 0.0, 1.0),
+        (radius > r_low).astype(mx.float32),
+    )
+    qf = q.astype(mx.float32)
+    scale = 1.0 / math.sqrt(D)
+    dot = qf @ centroid.swapaxes(-1, -2)  # (B, H, Nq, Ck)
+    bound = mx.linalg.norm(qf, axis=-1, keepdims=True) * (radius * beta)[:, :, None, :]
+    Cq, Ck = Nq // block_size, Nk // block_size
+
+    def pool(logits: mx.array) -> mx.array:
+        return mx.logsumexp(logits.reshape(B, H, Cq, block_size, Ck), axis=3)
+
+    return pool(dot * scale), pool((dot + bound) * scale)
+
+
+def relative_block_mask(log_scores: mx.array, alpha: float) -> mx.array:
+    """Keep key blocks whose score is at least ``alpha`` times the row maximum.
+
+    RBS-Attention's selection rule, on log scores (as returned by
+    :func:`radius_bounded_block_scores`): keep ``b`` when
+    ``log S_b ≥ max_b' log S_b' + log α``. The paper applies it to each branch
+    separately (``α = 0.22`` base, ``0.18`` rescue, tuned offline on LLM
+    prompts) and unions the masks with ``mx.maximum``.
+
+    Args:
+        log_scores: ``(B, H, Cq, Ck)`` log block scores.
+        alpha: Relative threshold in ``(0, 1]``; ``1`` keeps only the maximum.
+
+    Returns:
+        ``(B, H, Cq, Ck)`` float32 additive mask (``0`` kept, ``-inf`` skipped).
+    """
+    if log_scores.ndim != 4:
+        raise ValueError(
+            f"log_scores must have rank 4 (B, H, Cq, Ck), got shape {tuple(log_scores.shape)}"
+        )
+    if not 0.0 < alpha <= 1.0:
+        raise ValueError(f"alpha must be in (0, 1], got {alpha}")
+    s = log_scores.astype(mx.float32)
+    keep = s >= mx.max(s, axis=-1, keepdims=True) + math.log(alpha)
+    return mx.where(keep, 0.0, float("-inf")).astype(mx.float32)
