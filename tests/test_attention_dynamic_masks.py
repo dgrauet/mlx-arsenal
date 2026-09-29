@@ -577,3 +577,31 @@ class TestRelativeBlockMask:
     def test_invalid_alpha(self, alpha):
         with pytest.raises(ValueError):
             relative_block_mask(mx.zeros((1, 1, 2, 3)), alpha)
+
+
+def _load_rbs_recipe():
+    note = Path(__file__).parent.parent / "docs" / "research" / "radius-bounded-scores.md"
+    match = re.search(r"<!-- rbs-recipe -->\s*```python\n(.*?)```", note.read_text(), re.S)
+    assert match, "RBS recipe block not found in the research note"
+    namespace: dict[str, Any] = {}
+    exec(match.group(1), namespace)
+    return namespace["rbs_block_mask"]
+
+
+class TestRbsRecipe:
+    def test_union_contains_both_branches_and_the_diagonal(self):
+        rbs_block_mask = _load_rbs_recipe()
+        rng = np.random.default_rng(11)
+        # Logit-scale inputs (std 3): block scores spread enough for alpha to bite.
+        q = array_from_any(3 * rng.standard_normal((1, 2, 128, 16)).astype(np.float32))
+        k = array_from_any(3 * rng.standard_normal((1, 2, 128, 16)).astype(np.float32))
+        mask = np.array(rbs_block_mask(q, k, block_size=16, diagonal=2))
+        base, rescue = radius_bounded_block_scores(q, k, block_size=16)
+        for branch, alpha in ((base, 0.22), (rescue, 0.18)):
+            kept = np.array(relative_block_mask(branch, alpha)) == 0
+            assert np.all(mask[kept] == 0)
+        idx = np.arange(8)
+        assert np.all(mask[:, :, idx, idx] == 0)
+        assert np.all(mask[:, :, idx[1:], idx[:-1]] == 0)
+        assert np.isin(mask, (0.0, -np.inf)).all()
+        assert (mask == -np.inf).any()  # it does drop blocks
