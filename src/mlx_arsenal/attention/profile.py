@@ -93,18 +93,17 @@ def classify_heads_from_probs(
     S = T * H * W
     if probs.shape[2] != S or probs.shape[3] != S:
         raise ValueError(f"probs last two dims must be {S}, got {probs.shape[2:]}")
-    t_flat, h_flat, w_flat = _thw_ids(T, H, W)
-    same_frame = mx.equal(mx.expand_dims(t_flat, 0), mx.expand_dims(t_flat, 1))
-    same_h = mx.equal(mx.expand_dims(h_flat, 0), mx.expand_dims(h_flat, 1))
-    same_w = mx.equal(mx.expand_dims(w_flat, 0), mx.expand_dims(w_flat, 1))
-    same_pos = mx.logical_and(same_h, same_w)
-    # float32: MLX axis reductions in bf16 / fp16 saturate or overflow on long
-    # rows, and this one spans S * S probabilities per (batch, head).
-    probs = probs.astype(mx.float32)
-    same_frame_f = same_frame.astype(mx.float32)
-    same_pos_f = same_pos.astype(mx.float32)
-    mass_frame = mx.sum(probs * same_frame_f, axis=(2, 3)) / S  # (B, nH)
-    mass_pos = mx.sum(probs * same_pos_f, axis=(2, 3)) / S
+    # Tokens are T-major, so (query, key) pairs in the same frame / at the same
+    # spatial position are diagonals of the (T, HW, T, HW) view: read only
+    # those. float32: MLX axis reductions in bf16 / fp16 saturate or overflow
+    # on long rows, and each head sums S * S / T of them.
+    B, nH = probs.shape[:2]
+    HW = H * W
+    p = probs.reshape(B, nH, T, HW, T, HW)
+    same_frame = mx.diagonal(p, axis1=2, axis2=4).astype(mx.float32)  # (B, nH, HW, HW, T)
+    same_pos = mx.diagonal(p, axis1=3, axis2=5).astype(mx.float32)  # (B, nH, T, T, HW)
+    mass_frame = mx.sum(same_frame.reshape(B, nH, -1), axis=-1) / S  # (B, nH)
+    mass_pos = mx.sum(same_pos.reshape(B, nH, -1), axis=-1) / S
     mass_frame = mx.mean(mass_frame, axis=0)  # (nH,)
     mass_pos = mx.mean(mass_pos, axis=0)
     return mx.stack([mass_frame, mass_pos], axis=1)
