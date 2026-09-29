@@ -98,8 +98,11 @@ def classify_heads_from_probs(
     same_h = mx.equal(mx.expand_dims(h_flat, 0), mx.expand_dims(h_flat, 1))
     same_w = mx.equal(mx.expand_dims(w_flat, 0), mx.expand_dims(w_flat, 1))
     same_pos = mx.logical_and(same_h, same_w)
-    same_frame_f = same_frame.astype(probs.dtype)
-    same_pos_f = same_pos.astype(probs.dtype)
+    # float32: MLX axis reductions in bf16 / fp16 saturate or overflow on long
+    # rows, and this one spans S * S probabilities per (batch, head).
+    probs = probs.astype(mx.float32)
+    same_frame_f = same_frame.astype(mx.float32)
+    same_pos_f = same_pos.astype(mx.float32)
     mass_frame = mx.sum(probs * same_frame_f, axis=(2, 3)) / S  # (B, nH)
     mass_pos = mx.sum(probs * same_pos_f, axis=(2, 3)) / S
     mass_frame = mx.mean(mass_frame, axis=0)  # (nH,)
@@ -159,7 +162,8 @@ def classify_heads_from_qk(
     D = q.shape[3]
     scale = 1.0 / mx.sqrt(mx.array(D, dtype=q.dtype))
     logits = mx.matmul(q_sub, mx.swapaxes(k, 2, 3)) * scale
-    probs = mx.softmax(logits, axis=-1)  # (B, nH, n_samples, S)
+    # float32 for the key-axis sums below (see classify_heads_from_probs).
+    probs = mx.softmax(logits.astype(mx.float32), axis=-1)  # (B, nH, n_samples, S)
     t_flat, h_flat, w_flat = _thw_ids(T, H, W)
     t_q = mx.take(t_flat, idx)
     h_q = mx.take(h_flat, idx)
@@ -168,8 +172,8 @@ def classify_heads_from_qk(
     same_h = mx.equal(mx.expand_dims(h_q, 1), mx.expand_dims(h_flat, 0))
     same_w = mx.equal(mx.expand_dims(w_q, 1), mx.expand_dims(w_flat, 0))
     same_pos = mx.logical_and(same_h, same_w)
-    same_frame_f = same_frame.astype(probs.dtype)
-    same_pos_f = same_pos.astype(probs.dtype)
+    same_frame_f = same_frame.astype(mx.float32)
+    same_pos_f = same_pos.astype(mx.float32)
     mass_frame = mx.sum(probs * same_frame_f, axis=-1)  # (B, nH, n_samples)
     mass_pos = mx.sum(probs * same_pos_f, axis=-1)
     mass_frame = mx.mean(mass_frame, axis=(0, 2))
