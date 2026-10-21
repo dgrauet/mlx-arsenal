@@ -38,6 +38,7 @@ caller.
 | `factor_transfer` | longest prefix with `(i+1)(1 − c_(i)) ≤ f` | Fast-dLLM `get_transfer_index_dynamic` |
 | `entropy_bound_transfer` | longest low-entropy prefix with `Σ_{j<i} H_(j) ≤ γ` | EB-Sampler, DiffusionGemma acceptance |
 | `edit_transfer` | revise committed tokens when `x0 ≠ token` and `p > τ_edit` | LLaDA2.1/2.2 `editing_threshold`, Nemotron-Labs, SGLang JointThreshold |
+| `apply_block_edits` | consume DELETE / SPLIT tokens in a fixed-length block, tracking original masks | LLaDA2.2, SGLang `JointThresholdInDel` |
 | `linear_temperature`, `uniform_canvas`, `renoise`, `StableConfidentStopping` | uniform-noise decoding: temperature schedule, random canvas, re-noising, stable-and-confident stop | Hugging Face `generation_diffusion_gemma.py` |
 | `transfer_schedule` | `(B, steps)` linear quotas | Fast-dLLM / LLaDA `get_num_transfer_tokens` |
 | `block_ranges` | block boundaries, prompt-relative or absolute-aligned | dInfer `BlockIterator` (`start_block_align`) |
@@ -161,6 +162,69 @@ def decode_with_editing(model, prompt, *, gen_len, block_len, mask_id, threshold
     return x[:, P : P + gen_len], forwards
 ```
 
+## Insertion and deletion (LLaDA2.2)
+
+LLaDA2.2 adds two structural tokens. DELETE removes its position, so the
+rest of the block shifts left and the block is padded with masks; SPLIT
+inserts a mask before the token it overwrites. The block keeps its length.
+SGLang's `JointThresholdInDel` (merged 2026-10-08) specifies the inference
+rule; one step of it, without the anti-loop resampling, is below. While
+original masks remain, a step must commit `1 + introduced masks`
+positions, so at least one original mask is resolved even when edits keep
+adding masks. Original masks whose argmax is the mask token are re-argmaxed
+without it. The final cleanup forbids the mask, DELETE and SPLIT tokens and
+commits every remaining mask.
+
+The budget around it stays with the caller: SGLang counts steps with no
+original mask left (cumulatively) and triggers the cleanup at
+`max_post_edit_steps`, or after `block_size + max_post_edit_steps` steps;
+the Hugging Face reference resets that count whenever an original mask
+reappears. The anti-loop (re-sampling the least confident changing
+position when a block state repeats; deterministic in SGLang, random in
+the reference) needs a set of seen blocks, which is Python-side state. The
+test suite checks this block against a transcription of SGLang's step.
+
+<!-- indel-step -->
+```python
+import mlx.core as mx
+
+from mlx_arsenal.diffusion import apply_block_edits, edit_transfer, threshold_transfer, topk_transfer
+
+
+def indel_step(logits, block, is_orig, *, prompt_len, mask_id, delete_id, split_id,
+               threshold=0.5, editing_threshold=0.0, final=False):
+    """One LLaDA2.2 InDel step (SGLang JointThresholdInDel, without anti-loop)."""
+    B, L, V = logits.shape
+    logits = logits.astype(mx.float32)
+    probs = mx.softmax(logits, axis=-1)
+    vocab = mx.arange(V)
+    suffix = mx.arange(L)[None] >= prompt_len
+    masked = (block == mask_id) & suffix
+    orig = is_orig & masked
+    x = mx.argmax(logits, axis=-1)
+    if not final:  # an original mask must not be "resolved" back to MASK
+        no_mask = mx.argmax(mx.where(vocab == mask_id, -mx.inf, logits), axis=-1)
+        x = mx.where(orig & (x == mask_id), no_mask, x)
+    p = mx.take_along_axis(probs, x[..., None], axis=-1)[..., 0]
+    if final:
+        m2t = masked
+    else:
+        n_orig = orig.sum(axis=1)
+        k = (1 + masked.sum(axis=1) - n_orig).astype(mx.int32)
+        high = threshold_transfer(p, masked, threshold, strict=True, force_one=False)
+        # With no original mask left, k exceeds the mask count: top-k takes them all.
+        m2t = mx.where((high.sum(axis=1) >= k)[:, None], high, topk_transfer(p, masked, k))
+    t2t = edit_transfer(x, p, block, suffix & ~masked, editing_threshold)
+    write = m2t | t2t
+    if final:  # no MASK / DELETE / SPLIT in the cleanup
+        banned = (vocab == mask_id) | (vocab == delete_id) | (vocab == split_id)
+        clean = mx.argmax(mx.where(banned, -mx.inf, logits), axis=-1)
+        x = mx.where(banned[x], clean, x)
+    new = mx.where(write, x.astype(block.dtype), block)
+    return apply_block_edits(block, new, is_orig, prompt_len=prompt_len, mask_id=mask_id,
+                             delete_id=delete_id, split_id=split_id)
+```
+
 ## Uniform-noise decoding (DiffusionGemma)
 
 DiffusionGemma does not use a mask token. A canvas starts as uniformly
@@ -225,13 +289,13 @@ are frozen while the other rows continue, as in the reference.
 Covered: DiffusionGemma (uniform-noise decoding; self-conditioning and the
 encoder cache stay model-side), LLaDA 1.x/1.5, Dream (the caller applies Dream's logit shift),
 LLaDA2.0/2.1 (with token editing), SDAR/TraDo, Nemotron-Labs Diffusion
-(diffusion mode, with token editing), LLaDA-UI, LLaDA2.2 with substitution
-editing but without its DELETE/INSERT edits.
+(diffusion mode, with token editing), LLaDA-UI, LLaDA2.2 (substitution
+editing, and DELETE / SPLIT edits with `apply_block_edits`).
 
 Not covered by v1:
 
-- **LLaDA2.2 DELETE/INSERT** edits change the canvas length; only
-  substitution editing (`edit_transfer`) is covered.
+- **LLaDA2.2 anti-loop resampling and post-edit budget**: caller-side
+  state (a set of seen blocks, a step counter); see the InDel section.
 
 ## Deviations from the references
 
