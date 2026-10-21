@@ -95,3 +95,4 @@ nav:
       - "Research: SeaCache spectral distance": research/seacache.md
       - "Research: adaptive flow steps (CAT-Flow)": research/adaptive-flow-steps.md
       - "Research: posterior-mean-capped guidance (PMC-CFG)": research/posterior-mean-cfg.md
+      - "Research: normalized attention guidance (NAG)": research/normalized-attention-guidance.md

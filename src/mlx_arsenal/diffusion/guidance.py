@@ -1,4 +1,6 @@
-"""PMC-CFG: posterior-mean-capped classifier-free guidance for flow matching.
+"""Guidance rules: PMC-CFG and normalized attention guidance (NAG).
+
+PMC-CFG: posterior-mean-capped classifier-free guidance for flow matching.
 
 Plain CFG extrapolates ``v_u + λ(v_c − v_u)``. With large scales the implied
 clean-sample estimate (the posterior mean) overshoots, which shows up as
@@ -95,3 +97,70 @@ def posterior_mean_capped_guidance(
     beta = mx.where(a > 0, beta_cap, nominal)
     guided = vc + beta[:, None] * (vc - vu)
     return guided.reshape(cond.shape).astype(cond.dtype)
+
+
+def normalized_attention_guidance(
+    positive: mx.array,
+    negative: mx.array,
+    *,
+    scale: float,
+    tau: float = 2.5,
+    alpha: float = 0.5,
+    axis: int | tuple[int, ...] = -1,
+) -> mx.array:
+    """Normalized attention guidance (NAG) on attention outputs.
+
+    NAG (Chen et al., arXiv 2505.21179) guides in attention-feature space
+    instead of on the model output, which works for few-step and distilled
+    models where CFG fails. The same queries attend to the positive and the
+    negative context. The two outputs are extrapolated, the L1 norm of the
+    result is clipped per token to ``tau`` times that of the positive output,
+    and the result is blended back with the positive output::
+
+        z = scale * positive - (scale - 1) * negative
+        z = z * min(|z|_1 / |positive|_1, tau) / (|z|_1 / |positive|_1)
+        out = alpha * z + (1 - alpha) * positive
+
+    Apply it to cross-attention outputs before the output projection; the
+    extra cost is one attention call against the negative context. Computed
+    in float32; a token whose positive output is all zero gets a zero
+    guidance instead of NaN.
+
+    Args:
+        positive: Attention output against the positive context.
+        negative: Attention output against the negative context, same shape.
+        scale: Extrapolation factor (``>= 1``; ``1`` returns ``positive``).
+            The reference defaults are 5 for Flux, 11 for distilled LTX.
+        tau: Clip on the per-token L1-norm ratio (``> 0``).
+        alpha: Blend between the clipped guidance and ``positive``, in
+            ``[0, 1]``.
+        axis: Feature axes of the L1 norm. ``-1`` for a ``(B, N, H*D)``
+            output; ``(1, 3)`` for ``(B, H, N, D)`` (the norm spans all heads,
+            as in the reference, which normalizes the merged output).
+
+    Returns:
+        Guided output in ``positive``'s dtype.
+
+    References:
+        https://github.com/ChenDarYen/Normalized-Attention-Guidance (MIT)
+    """
+    if tuple(positive.shape) != tuple(negative.shape):
+        raise ValueError(
+            f"positive and negative must share one shape, got {tuple(positive.shape)} and "
+            f"{tuple(negative.shape)}"
+        )
+    if scale < 1.0:
+        raise ValueError(f"scale must be >= 1, got {scale}")
+    if tau <= 0.0:
+        raise ValueError(f"tau must be > 0, got {tau}")
+    if not 0.0 <= alpha <= 1.0:
+        raise ValueError(f"alpha must be in [0, 1], got {alpha}")
+    pos = positive.astype(mx.float32)
+    guided = pos * scale - negative.astype(mx.float32) * (scale - 1.0)
+    norm_pos = mx.sum(mx.abs(pos), axis=axis, keepdims=True)
+    norm_guided = mx.sum(mx.abs(guided), axis=axis, keepdims=True)
+    # min(r, tau) / r with r = norm_guided / norm_pos, written so that r <= tau
+    # (including 0 / 0) leaves the guidance untouched and r = inf zeroes it.
+    clip = mx.where(norm_guided > tau * norm_pos, tau * norm_pos / norm_guided, 1.0)
+    out = alpha * (guided * clip) + (1.0 - alpha) * pos
+    return out.astype(positive.dtype)
