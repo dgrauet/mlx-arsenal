@@ -14,6 +14,7 @@ from mlx_arsenal.attention.dynamic_masks import (
     top_k_block_mask,
     top_p_block_mask,
 )
+from mlx_arsenal.attention.kv_cache import RollingKVCache
 from mlx_arsenal.attention.masks import block_causal_mask, causal_mask, sliding_window_mask
 from mlx_arsenal.attention.permute import (
     block_contiguous_permutation,
@@ -38,6 +39,7 @@ from mlx_arsenal.attention.video_masks import (
 
 __all__ = [
     "Kind",
+    "RollingKVCache",
     "antidiagonal_block_scores",
     "block_causal_mask",
     "block_contiguous_permutation",
