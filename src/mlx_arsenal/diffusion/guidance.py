@@ -130,7 +130,8 @@ def normalized_attention_guidance(
         positive: Attention output against the positive context.
         negative: Attention output against the negative context, same shape.
         scale: Extrapolation factor (``>= 1``; ``1`` returns ``positive``).
-            The reference defaults are 5 for Flux, 11 for distilled LTX.
+            Typical values: 5 for Flux (reference README), 11 for distilled
+            LTX (ltx-2-mlx).
         tau: Clip on the per-token L1-norm ratio (``> 0``).
         alpha: Blend between the clipped guidance and ``positive``, in
             ``[0, 1]``.
