@@ -29,6 +29,7 @@ from .schedulers import (
     get_sampling_sigmas,
 )
 from .seacache import sea_filter
+from .softcache import SoftCacheController, SoftCacheDecision, regrid_tail
 from .teacache import TeaCacheController
 from .timestep import TimestepEmbedding, get_timestep_embedding
 from .uniform_decode import (
@@ -49,6 +50,8 @@ __all__ = [
     "HeadMaskCache",
     "PerHeadAttentionCache",
     "PerLayerAttentionCache",
+    "SoftCacheController",
+    "SoftCacheDecision",
     "StableConfidentStopping",
     "TeaCacheController",
     "TimestepEmbedding",
@@ -72,6 +75,7 @@ __all__ = [
     "pooled_qk",
     "posterior_mean_capped_guidance",
     "qk_drift",
+    "regrid_tail",
     "renoise",
     "sea_filter",
     "splice_heads",
