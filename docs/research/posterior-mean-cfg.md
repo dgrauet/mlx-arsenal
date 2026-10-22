@@ -47,8 +47,9 @@ A caller in the paper's convention (`t = 1` is data, `u = x0 − noise`) passes
 
 ## Measured on ERNIE-Image (MLX)
 
-ERNIE-Image SFT (MLX port, int8), 512², its default shift-3 schedule at 28
-steps, two prompts, one seed each. Saturation is the mean HSV saturation,
+ERNIE-Image SFT (MLX port, int8), 512², linear σ with shift 3 at 28 steps
+(the port's code default; the checkpoint config sets shift 4, which was
+not measured), two prompts, one seed each. Saturation is the mean HSV saturation,
 "clipped" the share of pixels with a channel at 0 or 255.
 
 | Guidance | HSV sat. p1 | clipped p1 | HSV sat. p2 | clipped p2 |
