@@ -64,7 +64,10 @@ step count is not known in advance: size any per-step buffers dynamically.
 ## Measured on ERNIE-Image (MLX)
 
 ERNIE-Image SFT (MLX port, int8), 512², CFG 5, two prompts, one seed each.
-Baseline: the model's own schedule (linear σ with shift 3) at `N` steps.
+Baseline: linear σ with shift 3 at `N` steps. That is the port's code
+default, but the checkpoint's scheduler config sets shift 4, so it is not
+the sampler the pipeline runs; the comparison is consistent (reference and
+baselines share shift 3) but was not repeated at shift 4.
 Error: PSNR of the decoded image against the same schedule at 100 steps
 (closeness to the converged ODE solution, not a perceptual score).
 
