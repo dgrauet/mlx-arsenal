@@ -13,6 +13,7 @@ from .guidance import normalized_attention_guidance, posterior_mean_capped_guida
 from .mask_reuse import HeadMaskCache, pooled_qk, qk_drift
 from .masked_decode import (
     TokenStats,
+    apply_block_edits,
     block_ranges,
     edit_transfer,
     entropy_bound_transfer,
@@ -58,6 +59,7 @@ __all__ = [
     "TokenStats",
     "VerifiedFeatureCache",
     "WindowResidualController",
+    "apply_block_edits",
     "block_ranges",
     "cfg_head_similarity",
     "cfg_skip_mask",

@@ -20,6 +20,7 @@ mask / special token ids and the stopping logic. See
 
 from __future__ import annotations
 
+import operator
 from collections.abc import Sequence
 from typing import NamedTuple
 
@@ -433,3 +434,99 @@ def edit_transfer(
     confident = p > threshold if strict else p >= threshold
     changed = mx.not_equal(x0.astype(mx.int64), tokens.astype(mx.int64))
     return mx.logical_and(mx.logical_and(editable, changed), confident)
+
+
+def apply_block_edits(
+    old: mx.array,
+    new: mx.array,
+    is_orig_mask: mx.array,
+    *,
+    prompt_len: int | mx.array,
+    mask_id: int,
+    delete_id: int,
+    split_id: int,
+) -> tuple[mx.array, mx.array]:
+    """Consume DELETE / SPLIT edit tokens in a fixed-length block (LLaDA2.2 InDel).
+
+    LLaDA2.2 can write two structural tokens into a block. DELETE removes its
+    position, so the rest of the block shifts left. SPLIT expands its position
+    into ``[mask_id, old_token]``, inserting a new mask before the token it
+    replaced. The block keeps its length: the result is truncated or padded on
+    the right with masks. ``is_orig_mask`` follows each token, and every mask
+    this creates (SPLIT or padding) is marked non-original.
+
+    This is SGLang's ``JointThresholdInDel._apply_edit_operations`` (PR
+    #31773), vectorized. The rest of the step composes from existing rules:
+
+    * M2T, while original masks remain: with ``k = 1 + (#masks -
+      #original masks)``, take ``threshold_transfer(prob, masks, t,
+      strict=True, force_one=False)`` if it selects at least ``k`` positions,
+      else ``topk_transfer(prob, masks, k)``. At least one original mask is then
+      resolved per step. Before ranking, re-argmax original masks whose
+      argmax is ``mask_id`` with that logit set to ``-inf``.
+    * T2T: :func:`edit_transfer` on committed suffix positions.
+    * ``new = mx.where(m2t | t2t, x0, old)``, then this function.
+    * Final cleanup: forbid ``mask_id``, ``delete_id`` and ``split_id`` in the
+      logits and commit every remaining mask.
+
+    The post-edit budget and the anti-loop memory are caller-side state.
+
+    Args:
+        old: `(B, L)` integer block before this step's writes. SPLIT keeps
+            ``old`` at its position; the prompt prefix is copied from it.
+        new: `(B, L)` integer block after this step's writes (same dtype as
+            ``old``). Only suffix positions are interpreted as edits.
+        is_orig_mask: `(B, L)` bool, masks present when the block started (as
+            opposed to masks introduced by edits).
+        prompt_len: Length of the prompt prefix in the block, an int (numpy
+            integers included) or a `(B,)` integer array.
+        mask_id: Mask token id.
+        delete_id: DELETE token id.
+        split_id: SPLIT (insert) token id.
+
+    Returns:
+        ``(tokens, is_orig_mask)``, both `(B, L)`, with the dtypes of ``old``
+        and ``is_orig_mask``.
+    """
+    if old.ndim != 2 or tuple(old.shape) != tuple(new.shape):
+        raise ValueError(
+            f"old and new must share one (B, L) shape, got {tuple(old.shape)} and "
+            f"{tuple(new.shape)}"
+        )
+    if tuple(is_orig_mask.shape) != tuple(old.shape):
+        raise ValueError(
+            f"is_orig_mask shape {tuple(is_orig_mask.shape)} != block shape {tuple(old.shape)}"
+        )
+    if is_orig_mask.dtype != mx.bool_:
+        raise ValueError(f"is_orig_mask must have bool dtype, got {is_orig_mask.dtype}")
+    B, L = old.shape
+    if isinstance(prompt_len, mx.array):
+        if not mx.issubdtype(prompt_len.dtype, mx.integer) or prompt_len.size not in (1, B):
+            raise ValueError(
+                f"prompt_len must be an int or a (B,) integer array, got shape "
+                f"{tuple(prompt_len.shape)} and dtype {prompt_len.dtype}"
+            )
+        plen = prompt_len.reshape(-1, 1)
+    else:
+        plen = operator.index(prompt_len)
+    suffix = mx.arange(L)[None, :] >= plen
+    new = new.astype(old.dtype)
+    is_delete = mx.logical_and(suffix, new == delete_id)
+    is_split = mx.logical_and(suffix, new == split_id)
+
+    # Each position emits 0 (DELETE), 2 (SPLIT: mask + old token) or 1 token.
+    # The position's own token lands on the last slot it emits; a SPLIT's mask
+    # needs no scatter because the output starts filled with masks.
+    width = mx.where(is_delete, 0, mx.where(is_split, 2, 1))
+    dest = mx.cumsum(width, axis=1) - 1
+    overflow = 2 * L  # deleted positions write into a discarded slot
+    dest = mx.where(is_delete, overflow, dest).astype(mx.int32)
+    token = mx.where(mx.logical_or(is_split, mx.logical_not(suffix)), old, new)
+
+    # Scatter in int32: the GPU scatter has no 64-bit kernel, and tokenizer
+    # ids often arrive as int64 from numpy.
+    out_tokens = mx.full((B, overflow + 1), mask_id, dtype=mx.int32)
+    out_tokens = mx.put_along_axis(out_tokens, dest, token.astype(mx.int32), axis=1)
+    out_orig = mx.zeros((B, overflow + 1), dtype=mx.bool_)
+    out_orig = mx.put_along_axis(out_orig, dest, is_orig_mask, axis=1)
+    return out_tokens[:, :L].astype(old.dtype), out_orig[:, :L]
