@@ -181,8 +181,13 @@ original mask left (cumulatively) and triggers the cleanup at
 the Hugging Face reference resets that count whenever an original mask
 reappears. The anti-loop (re-sampling the least confident changing
 position when a block state repeats; deterministic in SGLang, random in
-the reference) needs a set of seen blocks, which is Python-side state. The
-test suite checks this block against a transcription of SGLang's step.
+the reference) needs a set of seen blocks, which is Python-side state.
+`final` is one flag for the whole batch, while SGLang decides the cleanup
+per row: rows that reach it at different steps are stepped separately.
+With `max_post_edit_steps == 0`, SGLang runs the cleanup in the same update
+as the step that selects the last original masks; here it takes one more
+step. The test suite checks this block against a transcription of SGLang's
+step.
 
 <!-- indel-step -->
 ```python
@@ -198,7 +203,7 @@ def indel_step(logits, block, is_orig, *, prompt_len, mask_id, delete_id, split_
     logits = logits.astype(mx.float32)
     probs = mx.softmax(logits, axis=-1)
     vocab = mx.arange(V)
-    suffix = mx.arange(L)[None] >= prompt_len
+    suffix = mx.arange(L)[None] >= mx.array(prompt_len).reshape(-1, 1)  # int or (B,)
     masked = (block == mask_id) & suffix
     orig = is_orig & masked
     x = mx.argmax(logits, axis=-1)

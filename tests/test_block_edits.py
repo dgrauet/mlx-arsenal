@@ -114,6 +114,38 @@ class TestApplyBlockEdits:
         assert tokens.dtype == mx.int64 and tokens.shape == (1, 3)
         assert is_orig.dtype == mx.bool_
 
+    @pytest.mark.parametrize("dtype", [mx.int64, mx.uint64, mx.uint32, mx.int16])
+    def test_evaluates_on_any_integer_dtype(self, dtype):
+        # The GPU scatter has no 64-bit kernel; dtype checks alone stay lazy.
+        old = mx.array([[1, 2, 3, 4]], dtype=dtype)
+        new = mx.array([[1, DEL, SPLIT, 4]], dtype=dtype)
+        tokens, is_orig = apply_block_edits(
+            old, new, mx.zeros((1, 4), dtype=mx.bool_), prompt_len=1,
+            mask_id=MASK, delete_id=DEL, split_id=SPLIT,
+        )  # fmt: skip
+        assert tokens.dtype == dtype
+        assert tokens.tolist() == [[1, MASK, 3, 4]]
+        assert is_orig.tolist() == [[False, False, False, False]]
+
+    @pytest.mark.parametrize("plen", [np.int64(1), mx.array(1), mx.array([1, 1])])
+    def test_prompt_len_scalar_forms(self, plen):
+        old = mx.array([[1, 2, 3], [4, 5, 6]])
+        new = mx.array([[DEL, DEL, 3], [DEL, 5, 6]])
+        tokens, _ = apply_block_edits(
+            old, new, mx.zeros((2, 3), dtype=mx.bool_), prompt_len=plen,
+            mask_id=MASK, delete_id=DEL, split_id=SPLIT,
+        )  # fmt: skip
+        assert tokens.tolist() == [[1, 3, MASK], [4, 5, 6]]
+
+    @pytest.mark.parametrize("plen", [mx.array([1.5, 0.0]), mx.array([1, 2, 3]), 1.0])
+    def test_rejects_bad_prompt_len(self, plen):
+        old = mx.array([[1, 2, 3], [4, 5, 6]])
+        with pytest.raises((ValueError, TypeError)):
+            apply_block_edits(
+                old, old, mx.zeros((2, 3), dtype=mx.bool_), prompt_len=plen,
+                mask_id=MASK, delete_id=DEL, split_id=SPLIT,
+            )  # fmt: skip
+
     def test_rejects_mismatched_shapes(self):
         with pytest.raises(ValueError, match="shape"):
             _apply([[1, 2]], [[1, 2, 3]], [[False, False]], 0)

@@ -20,6 +20,7 @@ mask / special token ids and the stopping logic. See
 
 from __future__ import annotations
 
+import operator
 from collections.abc import Sequence
 from typing import NamedTuple
 
@@ -477,8 +478,8 @@ def apply_block_edits(
             ``old``). Only suffix positions are interpreted as edits.
         is_orig_mask: `(B, L)` bool, masks present when the block started (as
             opposed to masks introduced by edits).
-        prompt_len: Length of the prompt prefix in the block, an int or a
-            `(B,)` integer array.
+        prompt_len: Length of the prompt prefix in the block, an int (numpy
+            integers included) or a `(B,)` integer array.
         mask_id: Mask token id.
         delete_id: DELETE token id.
         split_id: SPLIT (insert) token id.
@@ -499,7 +500,15 @@ def apply_block_edits(
     if is_orig_mask.dtype != mx.bool_:
         raise ValueError(f"is_orig_mask must have bool dtype, got {is_orig_mask.dtype}")
     B, L = old.shape
-    plen = prompt_len if isinstance(prompt_len, int) else prompt_len.reshape(B, 1)
+    if isinstance(prompt_len, mx.array):
+        if not mx.issubdtype(prompt_len.dtype, mx.integer) or prompt_len.size not in (1, B):
+            raise ValueError(
+                f"prompt_len must be an int or a (B,) integer array, got shape "
+                f"{tuple(prompt_len.shape)} and dtype {prompt_len.dtype}"
+            )
+        plen = prompt_len.reshape(-1, 1)
+    else:
+        plen = operator.index(prompt_len)
     suffix = mx.arange(L)[None, :] >= plen
     new = new.astype(old.dtype)
     is_delete = mx.logical_and(suffix, new == delete_id)
@@ -514,8 +523,10 @@ def apply_block_edits(
     dest = mx.where(is_delete, overflow, dest).astype(mx.int32)
     token = mx.where(mx.logical_or(is_split, mx.logical_not(suffix)), old, new)
 
-    out_tokens = mx.full((B, overflow + 1), mask_id, dtype=old.dtype)
-    out_tokens = mx.put_along_axis(out_tokens, dest, token, axis=1)
+    # Scatter in int32: the GPU scatter has no 64-bit kernel, and tokenizer
+    # ids often arrive as int64 from numpy.
+    out_tokens = mx.full((B, overflow + 1), mask_id, dtype=mx.int32)
+    out_tokens = mx.put_along_axis(out_tokens, dest, token.astype(mx.int32), axis=1)
     out_orig = mx.zeros((B, overflow + 1), dtype=mx.bool_)
     out_orig = mx.put_along_axis(out_orig, dest, is_orig_mask, axis=1)
-    return out_tokens[:, :L], out_orig[:, :L]
+    return out_tokens[:, :L].astype(old.dtype), out_orig[:, :L]
