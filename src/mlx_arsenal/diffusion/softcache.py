@@ -129,6 +129,9 @@ class SoftCacheController:
         about zero). Call once per node, in order.
         """
         if step_index == 0:
+            # A new generation: drop the previous one's anchors too, or the
+            # first Residual Motion secant would span two generations.
+            self.reset()
             self._probe.seed(probe)
             return self._compute(sigma_next)
         raw = self._probe.delta(probe)
@@ -175,9 +178,10 @@ class SoftCacheController:
 def regrid_tail(sigmas: Sequence[float], index: int, target: float) -> list[float]:
     """Re-space the schedule after jumping from node ``index`` to ``target``.
 
-    The new tail goes linearly from ``target`` to 0 with as many nodes as
-    the old schedule had below ``target`` (plus the terminal 0), never more
-    than the old tail. The removed nodes are the compute the jump saves.
+    The new tail goes linearly from ``target`` to 0 (both included) with
+    ``1 +`` the number of old nodes strictly between 0 and ``target`` nodes,
+    never more than the old tail. A ``target`` on an existing node therefore
+    drops that node too. The removed nodes are the compute the jump saves.
     Note the tail is linear in sigma even if the original schedule was
     shifted, as in the reference code.
 
@@ -188,7 +192,15 @@ def regrid_tail(sigmas: Sequence[float], index: int, target: float) -> list[floa
 
     Returns:
         ``sigmas[: index + 1]`` followed by the new tail.
+
+    Raises:
+        ValueError: If ``index`` is not a node before the terminal 0, or
+            ``target`` is not in ``[0, sigmas[index]]``.
     """
+    if not 0 <= index < len(sigmas) - 1:
+        raise ValueError(f"index must be in [0, {len(sigmas) - 1}), got {index}")
+    if not 0.0 <= target <= sigmas[index]:
+        raise ValueError(f"target must be in [0, sigmas[index]={sigmas[index]}], got {target}")
     head = list(sigmas[: index + 1])
     n_tail = len(sigmas) - (index + 1)
     n_below = sum(1 for s in sigmas if 0.0 < s < target) + 1

@@ -203,6 +203,27 @@ class TestSoftCacheController:
         ctl.reset()
         with pytest.raises(RuntimeError):
             ctl.residual(0.5)
+        with pytest.raises(RuntimeError):
+            ctl.decide(1, 0.98, 0.96, mx.ones((4,)))
+        assert ctl.headroom == 1.0
+
+    def test_step_zero_starts_a_new_generation(self):
+        ctl = SoftCacheController(0.3)
+        ctl.decide(0, 1.0, 0.98, mx.ones((4,)))
+        ctl.record(mx.array([5.0]), 1.0)
+        ctl.record(mx.array([3.0]), 0.5)
+        ctl.decide(0, 1.0, 0.98, mx.ones((4,)))  # next generation, no reset()
+        ctl.record(mx.array([1.0]), 1.0)
+        # One anchor in this generation: no secant across generations.
+        assert ctl.residual(0.98).tolist() == [1.0]
+
+    def test_jump_at_the_last_node_lands_on_zero(self):
+        ctl = SoftCacheController(0.3)
+        ctl.decide(0, 0.2, 0.1, mx.ones((4,)))
+        d = ctl.decide(1, 0.1, 0.0, mx.ones((4,)))
+        assert d.action == "jump" and d.sigma_next == 0.0
+        sigmas = [1.0, 0.2, 0.1, 0.0]
+        assert regrid_tail(sigmas, 2, d.sigma_next) == sigmas
 
     @pytest.mark.parametrize("kw", [{"tau": 0.0}, {"tau": 0.3, "max_jump_factor": 0.5}])
     def test_rejects_bad_config(self, kw):
@@ -225,3 +246,15 @@ class TestRegridTail:
         assert out[6] == 0.5 and out[-1] == 0.0
         assert len(out) < len(sigmas)
         assert all(a > b for a, b in zip(out, out[1:], strict=False))
+
+
+def test_regrid_target_on_an_existing_node_drops_it():
+    lin = [1.0 - k / 10 for k in range(10)] + [0.0]
+    assert regrid_tail(lin, 2, 0.5) == pytest.approx([1.0, 0.9, 0.8, 0.5, 0.375, 0.25, 0.125, 0.0])
+
+
+@pytest.mark.parametrize(("index", "target"), [(2, 0.95), (2, -0.1), (10, 0.0), (-1, 0.0)])
+def test_regrid_rejects_bad_arguments(index, target):
+    lin = [1.0 - k / 10 for k in range(10)] + [0.0]
+    with pytest.raises(ValueError):
+        regrid_tail(lin, index, target)

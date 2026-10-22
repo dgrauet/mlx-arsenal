@@ -99,8 +99,9 @@ the "Euler on the computed sigmas" control, before adopting it.
   changed PSNR by +0.05 to +0.9 dB (SSIM both ways) and saved one NFE at
   `tau = 0.3`: not a defect, but a caller can regrid its own way and only
   use `decide` / `residual`.
-- **Precision.** The reference divides the relative-L1 distance in float64;
-  `mlx-arsenal` divides in float32. Decisions match the transcription
+- **Precision.** The reference reduces and divides the relative-L1
+  distance in the probe dtype (bf16 on FLUX); `mlx-arsenal` reduces in
+  float32 and divides in float64. Decisions match the transcription
   exactly on the test models; latents agree within `1e-4`, the difference
   being scaled by the jump stride.
 - **CFG.** The benchmark takes one decision per step for the batched CFG
