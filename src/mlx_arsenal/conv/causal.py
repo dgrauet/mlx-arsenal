@@ -13,8 +13,12 @@ import mlx.core as mx
 import mlx.nn as nn
 
 
-def _triple(v: int | tuple[int, int, int]) -> tuple[int, int, int]:
-    return (v, v, v) if isinstance(v, int) else v
+def _triple(v: int | tuple[int, int, int], name: str) -> tuple[int, int, int]:
+    if isinstance(v, int):
+        return (v, v, v)
+    if len(v) != 3:
+        raise ValueError(f"{name} must be an int or a 3-tuple (T, H, W), got {v!r}")
+    return tuple(v)
 
 
 class CausalConv3d(nn.Module):
@@ -45,6 +49,11 @@ class CausalConv3d(nn.Module):
         bias: Whether to add a learned bias.
         pad_mode: How to fill the causal context on the first chunk:
             ``"zeros"`` or ``"replicate"`` (first frame).
+
+    A conv whose temporal padding is not ``dilation_t * (kT - 1)``, such as
+    the strided ``time_conv`` of Wan's encoder downsample (``p_t = 0``, the
+    caller prepends one cached frame), is a plain ``nn.Conv3d``, not this
+    class.
     """
 
     def __init__(
@@ -61,10 +70,19 @@ class CausalConv3d(nn.Module):
         super().__init__()
         if pad_mode not in ("zeros", "replicate"):
             raise ValueError(f"pad_mode must be 'zeros' or 'replicate', got {pad_mode!r}")
-        kernel = _triple(kernel_size)
-        self._stride = _triple(stride)
-        self._dilation = _triple(dilation)
-        pad_hw = (padding, padding) if isinstance(padding, int) else tuple(padding)
+        kernel = _triple(kernel_size, "kernel_size")
+        self._stride = _triple(stride, "stride")
+        self._dilation = _triple(dilation, "dilation")
+        if isinstance(padding, int):
+            pad_hw = (padding, padding)
+        elif len(padding) == 2:
+            pad_hw = tuple(padding)
+        else:
+            # A PyTorch-style (pT, pH, pW) would be misread as (pH, pW).
+            raise ValueError(
+                f"padding is spatial only, an int or (pH, pW); got {padding!r}. "
+                "Temporal padding is causal and derived from the kernel."
+            )
         self._padding = (0, pad_hw[0], pad_hw[1])
         self._pad_mode = pad_mode
         self.context_frames = self._dilation[0] * (kernel[0] - 1)
@@ -133,4 +151,5 @@ class CausalConv3d(nn.Module):
         if self.context_frames == 0:
             return y, None
         seen = x if cache is None else mx.concatenate([cache, x], axis=1)
-        return y, seen[:, -self.context_frames :]
+        # A slice is a view: copy it so the cache does not pin the whole chunk.
+        return y, mx.contiguous(seen[:, -self.context_frames :])

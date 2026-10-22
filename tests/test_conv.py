@@ -1,5 +1,7 @@
 """Tests for conv module (weight normalization)."""
 
+import gc
+
 import mlx.core as mx
 import mlx.nn as nn
 import pytest
@@ -215,3 +217,28 @@ class TestCausalConv3d:
         conv = CausalConv3d(4, 6, (3, 1, 1))
         assert conv.weight.shape == (6, 3, 1, 1, 4)
         assert set(dict(conv.parameters())) == {"weight", "bias"}
+
+    def test_rejects_three_tuple_padding(self):
+        # Wan's PyTorch class takes (pT, pH, pW); here padding is spatial only.
+        with pytest.raises(ValueError, match="spatial"):
+            CausalConv3d(4, 6, (3, 1, 1), padding=(1, 0, 0))  # ty: ignore[invalid-argument-type]
+
+    @pytest.mark.parametrize("name", ["kernel_size", "stride", "dilation"])
+    def test_rejects_short_tuples(self, name):
+        kw = {"kernel_size": 3, name: (3, 3)}
+        with pytest.raises(ValueError, match=name):
+            CausalConv3d(4, 6, **kw)  # ty: ignore[invalid-argument-type]
+
+    def test_step_cache_does_not_pin_the_chunk(self):
+        conv = self._make(kernel=3, padding=1)
+        mx.eval(conv.parameters())
+        base = mx.get_active_memory()
+        x = mx.random.normal((1, 64, 64, 64, 4))  # 4 MiB
+        mx.eval(x)
+        y, cache = conv.step(x)
+        assert cache is not None
+        mx.eval(y, cache)
+        del x, y
+        gc.collect()  # the lazy graph can sit in a reference cycle
+        # The cache holds 2 frames (128 KiB); a view would keep all 64 alive.
+        assert mx.get_active_memory() - base < 4 * cache.nbytes
