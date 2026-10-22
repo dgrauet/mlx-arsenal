@@ -24,7 +24,10 @@ class RollingKVCache:
     appending. It returns the keys/values to attend to: the first ``sink``
     tokens of the history followed by its last ``window - sink`` tokens (the
     whole history while it is at most ``window`` tokens long, or always when
-    ``window`` is ``None``). Tokens between the two are evicted for good.
+    ``window`` is ``None``). Tokens between the two are evicted for good: a
+    rewrite that shortens the history does not bring them back, so fewer
+    than ``window`` tokens may be attended until the history grows again.
+    :meth:`positions` always tells which positions are resident.
 
     Typical use, one cache per layer::
 
@@ -106,7 +109,7 @@ class RollingKVCache:
 
         Args:
             k: Keys of the chunk (as attended, e.g. after RoPE).
-            v: Values of the chunk, same shape as ``k``.
+            v: Values of the chunk, same length as ``k`` along ``seq_axis``.
             start: Absolute position of the first token of the chunk. It may
                 rewrite resident tokens (``start < end``) but not leave a gap
                 (``start > end``) or rewrite evicted ones.
@@ -118,59 +121,69 @@ class RollingKVCache:
             in position order. :meth:`positions` gives their positions.
 
         Raises:
-            ValueError: On a gap, a rewrite of evicted tokens, or a chunk
-                longer than ``window - sink`` (its own tokens would be evicted).
+            ValueError: On a negative ``start``, a gap, a rewrite of evicted
+                tokens, mismatched chunk lengths, or a chunk whose own tokens
+                would be evicted (more than ``window - sink`` of them past the
+                sink). The cache is left unchanged.
         """
         n = k.shape[self.seq_axis]
+        if start < 0:
+            raise ValueError(f"start must be >= 0, got {start}")
+        if v.shape[self.seq_axis] != n or (k_raw is not None and k_raw.shape[self.seq_axis] != n):
+            raise ValueError("k, v and k_raw must have the same length along seq_axis")
         if start > self._end:
             raise ValueError(f"start={start} leaves a gap after end={self._end}")
         if self._evicted and self.sink < start < self.sink + self._evicted:
             raise ValueError(
                 f"start={start} rewrites evicted tokens [{self.sink}, {self.sink + self._evicted})"
             )
-        if self.window is not None and n > self.window - self.sink:
+        if self.window is not None and start + n - max(start, self.sink) > self.window - self.sink:
             raise ValueError(
-                f"chunk of {n} tokens exceeds the recent window ({self.window - self.sink} tokens)"
+                f"chunk of {n} tokens at start={start} exceeds the recent window "
+                f"({self.window - self.sink} tokens past the sink)"
             )
 
+        # Build the new state in locals and commit it at the end, so that a
+        # failing concatenate (e.g. mismatched heads) leaves the cache unchanged.
+        sink_raw = self._sink_raw
         if start < self.sink:
             # Raw sink keys stay valid only if every write to a sink position supplied them.
-            prev = self._sink_raw
-            covered = start == 0 or (prev is not None and prev.shape[self.seq_axis] >= start)
+            covered = start == 0 or (
+                sink_raw is not None and sink_raw.shape[self.seq_axis] >= start
+            )
             if k_raw is None or not covered:
-                self._sink_raw = None
+                sink_raw = None
             else:
                 parts = [self._take(k_raw, 0, self.sink - start)]
-                if start > 0 and prev is not None:
-                    parts.insert(0, self._take(prev, 0, start))
-                self._sink_raw = mx.concatenate(parts, axis=self.seq_axis)
+                if start > 0 and sink_raw is not None:
+                    parts.insert(0, self._take(sink_raw, 0, start))
+                sink_raw = mx.concatenate(parts, axis=self.seq_axis)
 
         # Buffer index of `start`. Writing at or inside the sink truncates every
         # later token, so nothing is evicted any more; past the sink, positions
         # shift by the evicted count.
-        if start <= self.sink:
-            cut = start
-            self._evicted = 0
-        else:
-            cut = start - self._evicted
+        evicted = 0 if start <= self.sink else self._evicted
+        cut = start - evicted
         if self._k is None or self._v is None:
-            self._k, self._v = k, v
+            new_k, new_v = k, v
         else:
-            self._k = mx.concatenate([self._take(self._k, 0, cut), k], axis=self.seq_axis)
-            self._v = mx.concatenate([self._take(self._v, 0, cut), v], axis=self.seq_axis)
-        self._end = start + n
+            new_k = mx.concatenate([self._take(self._k, 0, cut), k], axis=self.seq_axis)
+            new_v = mx.concatenate([self._take(self._v, 0, cut), v], axis=self.seq_axis)
 
-        size = self._k.shape[self.seq_axis]
+        size = new_k.shape[self.seq_axis]
         if self.window is not None and size > self.window:
             drop = size - self.window
             keep_from = self.sink + drop
-            self._k = mx.concatenate(
-                [self._take(self._k, 0, self.sink), self._take(self._k, keep_from)],
+            new_k = mx.concatenate(
+                [self._take(new_k, 0, self.sink), self._take(new_k, keep_from)],
                 axis=self.seq_axis,
             )
-            self._v = mx.concatenate(
-                [self._take(self._v, 0, self.sink), self._take(self._v, keep_from)],
+            new_v = mx.concatenate(
+                [self._take(new_v, 0, self.sink), self._take(new_v, keep_from)],
                 axis=self.seq_axis,
             )
-            self._evicted += drop
-        return self._k, self._v
+            evicted += drop
+
+        self._k, self._v, self._sink_raw = new_k, new_v, sink_raw
+        self._end, self._evicted = start + n, evicted
+        return new_k, new_v

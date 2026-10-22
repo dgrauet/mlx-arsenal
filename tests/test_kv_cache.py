@@ -113,10 +113,57 @@ class TestRollingKVCache:
         with pytest.raises(ValueError, match="gap"):
             cache.update(_tokens(3, 2), _tokens(3, 2), start=3)
 
-    def test_rejects_chunk_larger_than_recent_window(self):
+    @pytest.mark.parametrize(("start", "n"), [(0, 7), (2, 5), (1, 6)])
+    def test_rejects_chunk_whose_tokens_would_be_evicted(self, start, n):
         cache = RollingKVCache(window=6, sink=2)
+        if start:
+            cache.update(_tokens(0, start), _tokens(0, start), start=0)
         with pytest.raises(ValueError, match="window"):
-            cache.update(_tokens(0, 5), _tokens(0, 5), start=0)
+            cache.update(_tokens(start, n), _tokens(start, n), start=start)
+
+    def test_prefill_through_the_sink_fills_the_window(self):
+        cache = RollingKVCache(window=6, sink=2)
+        k_att, _ = cache.update(_tokens(0, 6), _tokens(0, 6), start=0)
+        assert k_att[0, 0, :, 0].tolist() == [float(p) for p in range(6)]
+        assert cache.num_evicted == 0
+        k_att, _ = cache.update(_tokens(6, 4), _tokens(6, 4), start=6)
+        assert cache.positions().tolist() == [0, 1, 6, 7, 8, 9]
+        assert k_att[0, 0, :, 0].tolist() == [0.0, 1.0, 6.0, 7.0, 8.0, 9.0]
+
+    def test_rejects_negative_start(self):
+        cache = RollingKVCache()
+        cache.update(_tokens(0, 4), _tokens(0, 4), start=0)
+        with pytest.raises(ValueError, match="start"):
+            cache.update(_tokens(0, 1), _tokens(0, 1), start=-1)
+
+    def test_rejects_length_mismatch(self):
+        cache = RollingKVCache()
+        with pytest.raises(ValueError, match="same length"):
+            cache.update(_tokens(0, 2), _tokens(0, 3), start=0)
+        with pytest.raises(ValueError, match="same length"):
+            cache.update(_tokens(0, 2), _tokens(0, 2), start=0, k_raw=_tokens(0, 1))
+
+    def test_failed_update_leaves_cache_unchanged(self):
+        cache = RollingKVCache(window=6, sink=2)
+        for c in range(5):
+            k = _tokens(2 * c, 2)
+            cache.update(k, k, start=2 * c, k_raw=k)
+        before = (cache.end, cache.num_evicted, cache.positions().tolist())
+        bad = mx.zeros((1, 3, 2, 3))  # other head count: the concatenate fails
+        with pytest.raises(ValueError):
+            cache.update(bad, bad, start=0, k_raw=bad)
+        assert (cache.end, cache.num_evicted, cache.positions().tolist()) == before
+        assert cache.sink_raw_keys is not None
+        k_att, _ = cache.update(_tokens(10, 2), _tokens(10, 2), start=10)
+        assert k_att[0, 0, :, 0].tolist() == [0.0, 1.0, 8.0, 9.0, 10.0, 11.0]
+
+    def test_shorter_rewrite_does_not_restore_evicted_tokens(self):
+        cache = RollingKVCache(window=6, sink=2)
+        for c in range(5):
+            cache.update(_tokens(2 * c, 2), _tokens(2 * c, 2), start=2 * c)
+        k_att, _ = cache.update(_tokens(8, 1), _tokens(8, 1), start=8)
+        assert cache.positions().tolist() == [0, 1, 6, 7, 8]
+        assert k_att[0, 0, :, 0].tolist() == [0.0, 1.0, 6.0, 7.0, 8.0]
 
     @pytest.mark.parametrize(("window", "sink"), [(4, 4), (4, 6), (None, -1)])
     def test_rejects_bad_config(self, window, sink):
