@@ -101,8 +101,9 @@ attention.
 These functions are quality tools and a reference for a future kernel: they
 let a port measure what dynamic sparsity and mask reuse cost in quality.
 
-To actually skip blocks, a port can hand the mask to a third-party Metal
-block-sparse kernel such as [mlx-mfa](https://pypi.org/project/mlx-mfa/)
+`block_sparse_attention` takes these masks directly (ADR-0002); it runs
+dense until a Metal kernel passes that ADR's gates. To skip blocks today, a
+port can hand the mask to a third-party Metal block-sparse kernel such as [mlx-mfa](https://pypi.org/project/mlx-mfa/)
 through its own adapter. `mlx-arsenal` does not depend on it (a single
 maintainer, pinned to `mlx <= 0.32.2` as of September 2026).
 

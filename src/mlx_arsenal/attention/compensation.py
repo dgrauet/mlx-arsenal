@@ -11,7 +11,9 @@ training-free methods recover part of the dropped signal:
   See :func:`probe_residual_correction` and :func:`select_probe_rows`.
 
 MLX has no block-sparse kernel, so everything here runs dense: these are
-quality tools and numerical references, not speedups. Clusters are
+quality tools and numerical references, not speedups. For contiguous token
+blocks, :func:`~mlx_arsenal.attention.block_sparse_attention` is the call
+site a block-sparse kernel plugs into (ADR-0002). Clusters are
 caller-provided integer labels; :func:`tile_labels` gives the labels that
 match the shipped Sliding Tile Attention masks.
 """
@@ -173,10 +175,30 @@ def centroid_compensated_attention(
         raise ValueError(
             f"block_mask shape {tuple(block_mask.shape)} does not broadcast to {(B, H, Cq, Ck)}"
         )
+    s = 1.0 / math.sqrt(D) if scale is None else scale
+    return _centroid_attention(q, k, v, ql, kl, kept.reshape(*lead, Cq, Ck), s)
+
+
+def _centroid_attention(
+    q: mx.array,
+    k: mx.array,
+    v: mx.array,
+    ql: mx.array,
+    kl: mx.array,
+    keep: mx.array,
+    scale: float,
+) -> mx.array:
+    """Core of :func:`centroid_compensated_attention`, without host-side checks.
+
+    `ql` / `kl` are int32 `(1|B, 1|H, S)` labels in range, `keep` a boolean
+    `(1|B, 1|H, Cq, Ck)` block mask; nothing here reads an array on the host.
+    """
+    Sq, Sk = q.shape[2], k.shape[2]
+    Cq, Ck = keep.shape[-2:]
     # Smallest (batch, head) extent the mask actually varies over.
-    Lb = max(lead[0], ql.shape[0], kl.shape[0])
-    Lh = max(lead[1], ql.shape[1], kl.shape[1])
-    keep = mx.broadcast_to(kept.reshape(*lead, Cq, Ck), (Lb, Lh, Cq, Ck))
+    Lb = max(keep.shape[0], ql.shape[0], kl.shape[0])
+    Lh = max(keep.shape[1], ql.shape[1], kl.shape[1])
+    keep = mx.broadcast_to(keep, (Lb, Lh, Cq, Ck))
 
     onehot = mx.equal(mx.expand_dims(kl, -1), mx.arange(Ck)).astype(mx.float32)  # (., ., Sk, Ck)
     counts = onehot.sum(axis=-2)  # (., ., Ck)
@@ -198,8 +220,7 @@ def centroid_compensated_attention(
 
     k_ext = mx.concatenate([k, k_bar.astype(k.dtype)], axis=2)
     v_ext = mx.concatenate([v, v_bar.astype(v.dtype)], axis=2)
-    s = 1.0 / math.sqrt(D) if scale is None else scale
-    return mx.fast.scaled_dot_product_attention(q, k_ext, v_ext, scale=s, mask=mask)
+    return mx.fast.scaled_dot_product_attention(q, k_ext, v_ext, scale=scale, mask=mask)
 
 
 def _middle_out(n: int) -> list[int]:
