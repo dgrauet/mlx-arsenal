@@ -1,6 +1,7 @@
 # ADR-0001: Sparse-attention roadmap for video DiTs
 
-- **Status**: accepted
+- **Status**: accepted; kernel scope amended by
+  [ADR-0002](0002-block-sparse-attention-kernel.md)
 - **Date**: 2026-05-15
 - **Stacks affected**: `python` / `mlx_arsenal.attention`, `mlx_arsenal.diffusion`
 

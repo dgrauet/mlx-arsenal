@@ -86,6 +86,7 @@ nav:
       - Overview: adr/index.md
       - "ADR-0000: Adopt Intendant": adr/0000-adopt-intendant.md
       - "ADR-0001: Sparse-attention roadmap": adr/0001-sparse-attention-roadmap.md
+      - "ADR-0002: Block-sparse attention kernel": adr/0002-block-sparse-attention-kernel.md
       - "Research: verified feature caching": research/verified-feature-caching.md
       - "Research: sparse-block compensation": research/sparse-block-compensation.md
       - "Research: dLLM block decoding": research/dllm-block-decoding.md
