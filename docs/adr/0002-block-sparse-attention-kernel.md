@@ -1,6 +1,6 @@
 # ADR-0002: Block-sparse attention contract and gated Metal kernel
 
-- **Status**: proposed
+- **Status**: accepted
 - **Date**: 2026-10-23
 - **Stacks affected**: `python` / `mlx_arsenal.attention`
 - **Amends**: [ADR-0001](0001-sparse-attention-roadmap.md) (kernel layer
