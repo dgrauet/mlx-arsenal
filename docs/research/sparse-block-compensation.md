@@ -70,8 +70,10 @@ centroid columns (skipped / kept block).
 
 ### Dense by design
 
-MLX has no block-sparse attention kernel, and ADR-0001 keeps writing one
-out of scope. Everything here runs dense — the compensated call costs
+MLX has no block-sparse attention kernel. ADR-0002 defines
+`block_sparse_attention` as the call site one plugs into, for contiguous
+token blocks, and gates moving a Metal kernel there. Until then everything
+here runs dense — the compensated call costs
 slightly **more** than dense attention. With `(S,)` labels and a
 `(Cq, Ck)` block mask, the `(Sq, Sk + Ck)` mask is built once and
 broadcast over batch and heads; per-head labels or masks build it per
@@ -124,7 +126,8 @@ token-level STA mask (pinned by a test).
   the primitive, cheap for a caller to add once a port needs it.
 - **k-means / cluster permutation**: stateful across steps, see above.
 - **GQA**: per-head labels are ambiguous with shared KV heads.
-- **A Metal block-sparse kernel**: a project of its own (ADR-0001).
+- **A Metal block-sparse kernel**: gated by ADR-0002; until then
+  `block_sparse_attention` runs this dense compensation.
 
 ## Reported results (from the papers)
 

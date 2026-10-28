@@ -26,6 +26,10 @@ RBS-Attention (Song et al., arXiv 2609.20971) guards centroid estimates
 against mean dilution: :func:`radius_bounded_block_scores` (centroid and
 radius-bounded log scores) and :func:`relative_block_mask` (keep blocks
 within ``α`` of the row maximum).
+
+Sol-Attn (arXiv 2607.24027) routes from block centroids alone:
+:func:`centroid_threshold_block_mask` keeps the key blocks whose centroid
+score clears a per-row ``mean + τ·std`` threshold, plus a diagonal band.
 """
 
 from __future__ import annotations
@@ -443,4 +447,95 @@ def relative_block_mask(log_scores: mx.array, alpha: float) -> mx.array:
         raise ValueError(f"alpha must be in (0, 1], got {alpha}")
     s = log_scores.astype(mx.float32)
     keep = s >= mx.max(s, axis=-1, keepdims=True) + math.log(alpha)
+    return mx.where(keep, 0.0, float("-inf")).astype(mx.float32)
+
+
+def _block_means(x: mx.array, block_size: int) -> mx.array:
+    """Float32 mean of every block of ``block_size`` tokens; the last block may be partial."""
+    B, H, N, D = x.shape
+    nb = -(-N // block_size)
+    pad = nb * block_size - N
+    xf = x.astype(mx.float32)
+    if pad:
+        xf = mx.pad(xf, [(0, 0), (0, 0), (0, pad), (0, 0)])
+    sums = xf.reshape(B, H, nb, block_size, D).sum(axis=3)
+    lengths = mx.minimum(block_size, N - mx.arange(nb) * block_size).astype(mx.float32)
+    return sums / lengths[:, None]
+
+
+def centroid_threshold_block_mask(
+    q: mx.array,
+    k: mx.array,
+    *,
+    tau: float,
+    block_size: int = 64,
+    band: int = 1,
+    scale: float | None = None,
+) -> mx.array:
+    """Keep key blocks whose centroid score clears a per-row ``mean + τ·std`` threshold.
+
+    Sol-Attn's routing rule (arXiv 2607.24027, "diag" threshold). Every
+    block of ``block_size`` consecutive tokens is summarized by its mean
+    query ``q̄_i`` and mean key ``k̄_j`` (the last block may be partial), and
+    key block ``j`` is kept for query block ``i`` when::
+
+        q̄_i · k̄_j  >  q̄_i · μ + τ · sqrt(Σ_d q̄_{i,d}² σ_d²)
+
+    where ``μ`` and ``σ²`` are the mean and per-dimension variance of the key
+    centroids of that (batch, head). The right-hand side estimates the mean
+    and standard deviation of row ``i``'s centroid scores, treating the key
+    dimensions as independent. Blocks with ``|i - j| <= band`` are always
+    kept. Scores are compared in ``scale · log2(e)`` units with a ``1e-6``
+    floor under the square root, as in the reference.
+
+    Sol's LTX-2.5 configuration uses ``τ = 1.0, 1.25, 1.5`` over its three
+    refine steps; such schedules, dense first blocks and extra forced blocks
+    (union them with ``mx.maximum``) stay with the caller.
+
+    Args:
+        q: ``(B, H, Nq, D)`` queries in block order.
+        k: ``(B, H, Nk, D)`` keys in block order, same ``(B, H)``.
+        tau: Threshold in standard deviations. ``-inf`` keeps every block;
+            ``+inf`` and NaN are rejected.
+        block_size: Tokens per block, ``>= 1``.
+        band: Neighbour blocks always kept on each side of the diagonal,
+            ``>= 0``.
+        scale: Logit scale. Defaults to ``1 / sqrt(D)``.
+
+    Returns:
+        ``(B, H, ceil(Nq / block_size), ceil(Nk / block_size))`` float32
+        additive mask (``0`` kept, ``-inf`` skipped), ready for
+        :func:`~mlx_arsenal.attention.block_sparse_attention`.
+    """
+    if q.ndim != 4 or k.ndim != 4:
+        raise ValueError(f"q and k must have rank 4, got {q.ndim} and {k.ndim}")
+    if k.shape[:2] != q.shape[:2]:
+        raise ValueError(f"q and k must share (batch, heads), got {q.shape[:2]} and {k.shape[:2]}")
+    D = q.shape[3]
+    if k.shape[3] != D:
+        raise ValueError(f"q and k head dim differ: {D} vs {k.shape[3]}")
+    if q.shape[2] == 0 or k.shape[2] == 0:
+        raise ValueError(
+            f"query and key sequences must be non-empty, got {q.shape[2]}, {k.shape[2]}"
+        )
+    if block_size < 1:
+        raise ValueError(f"block_size must be >= 1, got {block_size}")
+    if band < 0:
+        raise ValueError(f"band must be >= 0, got {band}")
+    if math.isnan(tau) or tau == math.inf:
+        raise ValueError(f"tau must be finite or -inf, got {tau}")
+    qc = _block_means(q, block_size)
+    kc = _block_means(k, block_size)
+    Cq, Ck = qc.shape[2], kc.shape[2]
+    if tau == -math.inf:
+        return mx.zeros((*q.shape[:2], Cq, Ck), dtype=mx.float32)
+    c = (1.0 / math.sqrt(D) if scale is None else scale) * math.log2(math.e)
+    k_mean = kc.mean(axis=2, keepdims=True)  # (B, H, 1, D)
+    k_var = ((kc - k_mean) ** 2).mean(axis=2, keepdims=True)
+    row_mean = (qc * k_mean).sum(-1)  # (B, H, Cq)
+    row_var = (qc * qc * k_var).sum(-1)
+    thr = row_mean * c + tau * mx.sqrt(mx.maximum(row_var, 0.0) * c * c + 1e-6)
+    scores = (qc @ kc.swapaxes(-1, -2)) * c
+    near = mx.abs(mx.arange(Cq)[:, None] - mx.arange(Ck)[None, :]) <= band
+    keep = (scores > thr[..., None]) | near
     return mx.where(keep, 0.0, float("-inf")).astype(mx.float32)
