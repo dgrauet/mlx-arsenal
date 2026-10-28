@@ -1,3 +1,7 @@
+from mlx_arsenal.attention.block_sparse import (
+    block_sparse_attention,
+    block_sparse_kernel_available,
+)
 from mlx_arsenal.attention.compensation import (
     centroid_compensated_attention,
     probe_residual_correction,
@@ -7,6 +11,7 @@ from mlx_arsenal.attention.compensation import (
 from mlx_arsenal.attention.dynamic_masks import (
     antidiagonal_block_scores,
     block_self_similarity,
+    centroid_threshold_block_mask,
     minmax_block_scores,
     radius_bounded_block_scores,
     relative_block_mask,
@@ -44,8 +49,11 @@ __all__ = [
     "block_causal_mask",
     "block_contiguous_permutation",
     "block_self_similarity",
+    "block_sparse_attention",
+    "block_sparse_kernel_available",
     "causal_mask",
     "centroid_compensated_attention",
+    "centroid_threshold_block_mask",
     "classify",
     "classify_heads_from_probs",
     "classify_heads_from_qk",
