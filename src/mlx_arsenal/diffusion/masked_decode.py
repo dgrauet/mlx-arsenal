@@ -12,6 +12,11 @@ committing ("transferring") a subset of the predictions. Every framework
 3. a per-step quota and a block schedule (:func:`transfer_schedule`,
    :func:`block_ranges`).
 
+Revisions of committed tokens build on the same statistics: substitution
+edits (:func:`edit_transfer`), DELETE / SPLIT edits (:func:`apply_block_edits`)
+and CoDR confidence-drift remasking (:func:`token_prob`,
+:func:`drift_probe_masks`, :func:`drift_remask`).
+
 All functions are pure and batched per row (no batch averaging), and
 compute in float32. The caller owns the model forward, the KV cache, the
 mask / special token ids and the stopping logic. See
@@ -20,6 +25,7 @@ mask / special token ids and the stopping logic. See
 
 from __future__ import annotations
 
+import math
 import operator
 from collections.abc import Sequence
 from typing import NamedTuple
@@ -40,6 +46,28 @@ class TokenStats(NamedTuple):
     """`(B, L)` float32 probability of `x0` under the temperature-1 softmax."""
     entropy: mx.array
     """`(B, L)` float32 entropy (nats) of the temperature-1 softmax."""
+
+
+def _float32_logits(logits: mx.array, suppress_ids: Sequence[int]) -> tuple[mx.array, mx.array]:
+    """Float32 `(B, L, V)` logits with `suppress_ids` at `-inf`, and their logsumexp.
+
+    One float32 copy of the logits (at V ~ 262k, ~1 GiB per 1024 positions);
+    probabilities are gathered from it, never a full softmax.
+    """
+    if logits.ndim != 3:
+        raise ValueError(f"logits must have rank 3 (B, L, V), got shape {tuple(logits.shape)}")
+    V = logits.shape[-1]
+    ids = sorted(set(suppress_ids))
+    if ids and (ids[0] < 0 or ids[-1] >= V):
+        raise ValueError(f"suppress_ids must lie in [0, {V}), got {ids}")
+    if len(ids) >= V:
+        raise ValueError("suppress_ids must leave at least one token")
+    lg = logits.astype(mx.float32)
+    if ids:
+        bias = mx.zeros((V,), dtype=mx.float32)
+        bias[mx.array(ids)] = float("-inf")
+        lg = lg + bias
+    return lg, mx.logsumexp(lg, axis=-1, keepdims=True)
 
 
 @mx.compile
@@ -91,28 +119,12 @@ def token_stats(
     Returns:
         :class:`TokenStats` `(x0, prob, entropy)`, each `(B, L)`.
     """
-    if logits.ndim != 3:
-        raise ValueError(f"logits must have rank 3 (B, L, V), got shape {tuple(logits.shape)}")
     if not temperature >= 0:
         raise ValueError(f"temperature must be >= 0, got {temperature}")
     if temperature > 0 and key is None:
         raise ValueError("key is required when temperature > 0")
-    V = logits.shape[-1]
-    ids = sorted(set(suppress_ids))
-    if ids and (ids[0] < 0 or ids[-1] >= V):
-        raise ValueError(f"suppress_ids must lie in [0, {V}), got {ids}")
-    if len(ids) >= V:
-        raise ValueError("suppress_ids must leave at least one token")
-
-    # One float32 (B, L, V) copy of the logits; the sampling noise and the
-    # entropy terms are fused by mx.compile (at V ~ 262k, one such array is
-    # ~1 GiB per 1024 positions). prob is gathered, not a full softmax.
-    lg = logits.astype(mx.float32)
-    if ids:
-        bias = mx.zeros((V,), dtype=mx.float32)
-        bias[mx.array(ids)] = float("-inf")
-        lg = lg + bias
-    lse = mx.logsumexp(lg, axis=-1, keepdims=True)
+    # The sampling noise and the entropy terms are fused by mx.compile.
+    lg, lse = _float32_logits(logits, suppress_ids)
 
     if temperature > 0:
         u = mx.random.uniform(shape=lg.shape, key=key)
@@ -434,6 +446,109 @@ def edit_transfer(
     confident = p > threshold if strict else p >= threshold
     changed = mx.not_equal(x0.astype(mx.int64), tokens.astype(mx.int64))
     return mx.logical_and(mx.logical_and(editable, changed), confident)
+
+
+def token_prob(logits: mx.array, tokens: mx.array, *, suppress_ids: Sequence[int] = ()) -> mx.array:
+    """Probability of given tokens under the temperature-1 softmax of the logits.
+
+    The counterpart of :attr:`TokenStats.prob` for tokens that are not the
+    argmax, e.g. how confident a probe forward still is in tokens committed
+    earlier (:func:`drift_remask`). Pass the same ``suppress_ids`` as to
+    :func:`token_stats` so the two probabilities are comparable. A token in
+    ``suppress_ids`` gets probability ``0``. Token ids are not range-checked,
+    to avoid a host sync per step.
+
+    Args:
+        logits: `(B, L, V)` logits, any float dtype.
+        tokens: `(B, L)` integer token ids in `[0, V)`.
+        suppress_ids: Token ids removed from the softmax, as in
+            :func:`token_stats`.
+
+    Returns:
+        `(B, L)` float32 probabilities.
+    """
+    lg, lse = _float32_logits(logits, suppress_ids)
+    if tuple(tokens.shape) != tuple(logits.shape[:2]):
+        raise ValueError(
+            f"tokens must have shape {tuple(logits.shape[:2])}, got {tuple(tokens.shape)}"
+        )
+    if not mx.issubdtype(tokens.dtype, mx.integer):
+        raise ValueError(f"tokens must have an integer dtype, got {tokens.dtype}")
+    idx = mx.expand_dims(tokens.astype(mx.int32), -1)
+    return mx.exp(mx.take_along_axis(lg, idx, axis=-1) - lse).squeeze(-1)
+
+
+def drift_probe_masks(start: int, length: int, num_partitions: int = 2) -> mx.array:
+    """Positions each CoDR probe forward masks: one stride class of the generation each.
+
+    CoDR (Confidence-Drift Remasking) re-scores committed tokens by masking a
+    stride-``k`` residue class of the generated span and reading the model's
+    confidence in the original tokens there (:func:`token_prob`). Probe ``i``
+    masks every position ``p >= start`` with ``(p - start) % k == i``; the
+    ``k`` probes cover the generated span exactly once and never touch the
+    prompt. Each probe is one extra forward.
+
+    Args:
+        start: First generated position (the prompt length), ``>= 0``.
+        length: Canvas length, ``>= start``.
+        num_partitions: Number of probes ``k``, ``>= 2`` (CoDR default 2).
+
+    Returns:
+        `(k, length)` bool masks; row ``i`` broadcasts against `(B, length)`.
+    """
+    if start < 0 or length < start:
+        raise ValueError(f"need 0 <= start <= length, got start={start}, length={length}")
+    if num_partitions < 2:
+        raise ValueError(f"num_partitions must be >= 2, got {num_partitions}")
+    offset = mx.arange(length) - start
+    classes = mx.arange(num_partitions)[:, None]
+    return mx.logical_and(
+        mx.greater_equal(offset, 0), mx.equal(mx.remainder(offset, num_partitions), classes)
+    )
+
+
+def drift_remask(
+    commit_prob: mx.array,
+    probe_prob: mx.array,
+    eligible: mx.array,
+    threshold: float = 0.0,
+) -> mx.array:
+    """Committed tokens whose confidence dropped since they were committed (CoDR).
+
+    CoDR (arXiv 2610.08833) remasks a token when the confidence it had at
+    commit time exceeds its confidence under the current context by more
+    than ``threshold``: ``commit_prob - probe_prob > threshold``. The paper's
+    default ``threshold = 0`` (ablated up to 0.30) remasks any drop. The
+    caller then refills the remasked positions with its commit rule, and
+    records the refill confidences as the new ``commit_prob``.
+
+    Args:
+        commit_prob: `(B, L)` confidence of each token when it was committed
+            (:attr:`TokenStats.prob` at that step).
+        probe_prob: `(B, L)` confidence of the same tokens under the probe
+            forwards (:func:`token_prob` with :func:`drift_probe_masks`).
+        eligible: `(B, L)` bool, positions that may be remasked (committed
+            generated tokens; CoDR: every generated position before the end
+            of the finished block).
+        threshold: Allowed drop; finite.
+
+    Returns:
+        `(B, L)` bool, a subset of ``eligible``.
+    """
+    shapes = {tuple(a.shape) for a in (commit_prob, probe_prob, eligible)}
+    if len(shapes) != 1:
+        raise ValueError(
+            f"commit_prob, probe_prob and eligible must share one shape, got {sorted(shapes)}"
+        )
+    if eligible.dtype != mx.bool_:
+        raise ValueError(f"eligible must have bool dtype, got {eligible.dtype}")
+    for name, a in (("commit_prob", commit_prob), ("probe_prob", probe_prob)):
+        if not mx.issubdtype(a.dtype, mx.floating):
+            raise ValueError(f"{name} must have a floating dtype, got {a.dtype}")
+    if not math.isfinite(threshold):
+        raise ValueError(f"threshold must be finite, got {threshold}")
+    drop = commit_prob.astype(mx.float32) - probe_prob.astype(mx.float32)
+    return mx.logical_and(eligible, drop > threshold)
 
 
 def apply_block_edits(
