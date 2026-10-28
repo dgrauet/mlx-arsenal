@@ -66,10 +66,12 @@ def block_sparse_attention(
     blocks are dropped; a query block that keeps no key block then has an
     empty softmax and an unspecified output.
 
-    The call never reads an array on the host: only shapes are checked, so
-    it stays lazy and works inside :func:`mx.compile`. A mask entry of
-    exactly ``0`` keeps its block and any other value (``-inf``, NaN, a
-    finite bias) skips it.
+    The call never reads an array on the host: only shapes and dtypes are
+    checked, so it stays lazy and works inside :func:`mx.compile`. The mask
+    must be floating point; an entry of exactly ``0`` keeps its block and
+    any other value (``-inf``, NaN, a finite bias) skips it. Boolean or
+    integer masks are rejected: convert a "1 = keep" route with
+    ``mx.where(route, 0.0, -mx.inf)``.
 
     The dense backend materializes a ``(1|B, 1|H, Sq, Sk + Ck)`` mask in
     ``q.dtype`` (``(1|B, 1|H, Sq, Sk)`` booleans without compensation), per
@@ -81,7 +83,7 @@ def block_sparse_attention(
         k: ``(B, H, Sk, D)`` keys, same ``(B, H)`` (GQA not supported).
         v: ``(B, H, Sk, Dv)`` values.
         block_mask: ``(1|B, 1|H, ceil(Sq / block_size), ceil(Sk / block_size))``
-            additive block mask: ``0`` keeps a block.
+            floating additive block mask: ``0`` keeps a block.
         block_size: Tokens per block, ``>= 1``. A kernel, once available,
             will require 64.
         compensate: Replace skipped key blocks by their centroids (``True``)
@@ -109,6 +111,11 @@ def block_sparse_attention(
     if block_size < 1:
         raise ValueError(f"block_size must be >= 1, got {block_size}")
     Cq, Ck = -(-Sq // block_size), -(-Sk // block_size)
+    if not mx.issubdtype(block_mask.dtype, mx.floating):
+        # A boolean or 0/1 "keep" mask would read inverted: False == 0 keeps.
+        raise ValueError(
+            f"block_mask must be a floating additive mask (0 keeps), got {block_mask.dtype}"
+        )
     if block_mask.ndim != 4:
         raise ValueError(
             f"block_mask must have rank 4 (B, H, Cq, Ck), got shape {tuple(block_mask.shape)}"

@@ -43,12 +43,11 @@ def _close(a: mx.array, b: mx.array, atol: float = 1e-5) -> bool:
 
 class TestBlockSparseAttention:
     @pytest.mark.parametrize(("Sq", "Sk", "bs"), [(64, 64, 16), (70, 53, 16), (37, 37, 8)])
-    @pytest.mark.parametrize("mask_shape", ["shared", "per_head"])
-    def test_matches_centroid_compensated_attention(self, Sq, Sk, bs, mask_shape):
+    @pytest.mark.parametrize("lead", [(1, 1), (2, 3), (2, 1), (1, 3)])
+    def test_matches_centroid_compensated_attention(self, Sq, Sk, bs, lead):
         B, H = 2, 3
         q, k, v = _qkv(B, H, Sq, Sk, 8, seed=Sq + Sk)
         Cq, Ck = -(-Sq // bs), -(-Sk // bs)
-        lead = (1, 1) if mask_shape == "shared" else (B, H)
         mask = _random_block_mask((*lead, Cq, Ck), seed=Sq)
         out = block_sparse_attention(q, k, v, block_mask=mask, block_size=bs)
         ref = centroid_compensated_attention(
@@ -86,30 +85,65 @@ class TestBlockSparseAttention:
             )
             assert _close(out, mx.fast.scaled_dot_product_attention(q, k, v, scale=8**-0.5))
 
-    def test_without_compensation_skipped_blocks_are_dropped(self):
-        q, k, v = _qkv(1, 2, 24, 20, 4, seed=3)
-        bs = 8
-        mask = _random_block_mask((1, 2, 3, 3), seed=4, p_skip=0.4)
-        mask = mx.concatenate([mx.zeros((1, 2, 3, 1)), mask[..., 1:]], axis=-1)  # no empty row
+    @pytest.mark.parametrize("lead", [(1, 1), (2, 3), (2, 1), (1, 3)])
+    def test_without_compensation_skipped_blocks_are_dropped(self, lead):
+        # Partial blocks on both sides; the reference drops key columns token by token.
+        B, H, Sq, Sk, bs = 2, 3, 21, 13, 8
+        q, k, v = _qkv(B, H, Sq, Sk, 4, seed=3)
+        mask = _random_block_mask((*lead, 3, 2), seed=4, p_skip=0.4)
+        mask = mx.concatenate([mx.zeros((*lead, 3, 1)), mask[..., 1:]], axis=-1)  # no empty row
         out = block_sparse_attention(
             q, k, v, block_mask=mask, block_size=bs, compensate=False, scale=0.3
         )
-        tok = mx.repeat(mx.repeat(mask, bs, axis=-2), bs, axis=-1)[..., :24, :20]
-        ref = mx.fast.scaled_dot_product_attention(q, k, v, scale=0.3, mask=tok)
+        keep = np.broadcast_to(np.array(mask) == 0, (B, H, 3, 2))
+        qn, kn, vn = (np.array(x, dtype=np.float64) for x in (q, k, v))
+        ref = np.zeros((B, H, Sq, 4))
+        for b in range(B):
+            for h in range(H):
+                for i in range(Sq):
+                    cols = [j for j in range(Sk) if keep[b, h, i // bs, j // bs]]
+                    logits = 0.3 * (kn[b, h, cols] @ qn[b, h, i])
+                    p = np.exp(logits - logits.max())
+                    ref[b, h, i] = (p / p.sum()) @ vn[b, h, cols]
+        assert np.allclose(np.array(out), ref, atol=1e-5)
+
+    def test_value_dim_may_differ(self):
+        q, k, _ = _qkv(1, 2, 30, 30, 8, seed=18)
+        v = _qkv(1, 2, 30, 30, 16, seed=19)[2]
+        mask = _random_block_mask((1, 2, 4, 4), seed=20)
+        out = block_sparse_attention(q, k, v, block_mask=mask, block_size=8)
+        ref = centroid_compensated_attention(
+            q, k, v, q_labels=mx.arange(30) // 8, k_labels=mx.arange(30) // 8, block_mask=mask
+        )
+        assert out.shape == (1, 2, 30, 16)
         assert _close(out, ref)
 
-    def test_only_exact_zero_keeps_a_block(self):
+    @pytest.mark.parametrize("compensate", [True, False])
+    def test_only_exact_zero_keeps_a_block(self, compensate):
         q, k, v = _qkv(1, 1, 16, 16, 4, seed=5)
         skip = mx.array([[[[0.0, NEG_INF], [NEG_INF, 0.0]]]])
-        odd = mx.array([[[[0.0, 1.0], [float("nan"), 0.0]]]])
-        a = block_sparse_attention(q, k, v, block_mask=skip, block_size=8)
-        b = block_sparse_attention(q, k, v, block_mask=odd, block_size=8)
-        assert _close(a, b, atol=0.0)
+        for odd in ([[0.0, 1.0], [float("nan"), 0.0]], [[0.0, 1.0], [-5.0, 0.0]]):
+            a = block_sparse_attention(
+                q, k, v, block_mask=skip, block_size=8, compensate=compensate
+            )
+            b = block_sparse_attention(
+                q, k, v, block_mask=mx.array([[odd]]), block_size=8, compensate=compensate
+            )
+            assert _close(a, b, atol=0.0)
+
+    @pytest.mark.parametrize("dtype", [mx.bool_, mx.uint8, mx.int32])
+    def test_rejects_non_floating_masks(self, dtype):
+        # A "True = keep" route would otherwise read inverted (False == 0 keeps).
+        q, k, v = _qkv(1, 1, 16, 16, 4, seed=21)
+        with pytest.raises(ValueError, match="floating"):
+            block_sparse_attention(
+                q, k, v, block_mask=mx.ones((1, 1, 2, 2), dtype=dtype), block_size=8
+            )
 
     def test_runs_under_compile(self):
         # No host reads: mx.compile rejects any .item() during tracing.
-        q, k, v = _qkv(1, 2, 32, 32, 8, seed=6)
-        mask = _random_block_mask((1, 2, 4, 4), seed=7)
+        q, k, v = _qkv(2, 2, 32, 32, 8, seed=6)
+        mask = _random_block_mask((2, 2, 4, 4), seed=7)
         for compensate in (True, False):
             fn = mx.compile(
                 lambda q, k, v, m, c=compensate: block_sparse_attention(
@@ -221,13 +255,14 @@ def _threshold_oracle(q, k, tau, bs, band, scale):
 
 
 class TestCentroidThresholdBlockMask:
-    @pytest.mark.parametrize(("Nq", "Nk", "bs"), [(256, 256, 32), (250, 197, 32), (64, 64, 64)])
+    @pytest.mark.parametrize(("Nq", "Nk", "bs"), [(256, 256, 32), (250, 197, 32), (90, 77, 16)])
     @pytest.mark.parametrize("tau", [0.0, 1.0, 1.5])
-    def test_matches_oracle(self, Nq, Nk, bs, tau):
+    @pytest.mark.parametrize("band", [0, 1])
+    def test_matches_oracle(self, Nq, Nk, bs, tau, band):
         q, k, _ = _qkv(2, 3, Nq, Nk, 16, seed=Nq + Nk)
         q, k = 3 * q, 3 * k  # spread the block scores
-        out = np.array(centroid_threshold_block_mask(q, k, tau=tau, block_size=bs, band=1))
-        keep = _threshold_oracle(q, k, tau, bs, 1, 0.25)
+        out = np.array(centroid_threshold_block_mask(q, k, tau=tau, block_size=bs, band=band))
+        keep = _threshold_oracle(q, k, tau, bs, band, 0.25)
         assert out.shape == keep.shape
         assert np.isin(out, (0.0, -np.inf)).all()
         assert np.array_equal(out == 0, keep)
@@ -259,6 +294,26 @@ class TestCentroidThresholdBlockMask:
         )
         assert out[0, 0, 0, 6] == 0
         assert (out[0, 0, 0, 2:6] == NEG_INF).all()
+
+    def test_ties_with_the_threshold_are_skipped(self):
+        # q = 0: every score equals the threshold at tau = 0; only the band survives.
+        _, k, _ = _qkv(1, 1, 64, 64, 8, seed=22)
+        out = np.array(
+            centroid_threshold_block_mask(
+                mx.zeros((1, 1, 64, 8)), k, tau=0.0, block_size=16, band=0
+            )
+        )
+        assert np.array_equal(out[0, 0] == 0, np.eye(4, dtype=bool))
+
+    def test_floor_under_the_square_root(self):
+        # q = 0 gives a zero std: the 1e-6 floor puts the threshold just below 0 at tau < 0.
+        _, k, _ = _qkv(1, 1, 64, 64, 8, seed=23)
+        out = np.array(
+            centroid_threshold_block_mask(
+                mx.zeros((1, 1, 64, 8)), k, tau=-1.0, block_size=16, band=0
+            )
+        )
+        assert np.all(out == 0)
 
     def test_scale_default(self):
         q, k, _ = _qkv(1, 2, 128, 128, 16, seed=17)
