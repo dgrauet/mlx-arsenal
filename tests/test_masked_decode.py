@@ -779,7 +779,9 @@ def _load_codr_loop() -> Any:
     return namespace["decode_codr"]
 
 
-def _codr_reference(model, prompt, *, gen_len, block_len, mask_id, threshold, drift_threshold, k):
+def _codr_reference(
+    model, prompt, *, gen_len, block_len, mask_id, threshold, refill_threshold, drift_threshold, k
+):
     """NumPy transliteration of CoDR's `generate` (Fast-dLLM sampler, LLaDA backbone)."""
     x = np.concatenate([prompt, np.full((prompt.shape[0], gen_len), mask_id)], axis=1)
     B, L = x.shape
@@ -822,7 +824,7 @@ def _codr_reference(model, prompt, *, gen_len, block_len, mask_id, threshold, dr
         remasked += int(rm.sum())
         x[rm] = mask_id
         while (rm & (x == mask_id)).any():
-            step(x, rm & (x == mask_id), threshold)
+            step(x, rm & (x == mask_id), refill_threshold)
     return x, nfe, remasked
 
 
@@ -830,7 +832,7 @@ class TestCodrLoop:
     MASK = TestReferenceLoop.MASK
 
     @staticmethod
-    def _model(seed: int):
+    def _model(seed: int, mask_bias: float = 0.0):
         # Position-weighted context: with a plain mean, two different contexts holding
         # the same multiset of tokens tie exactly, and float32 vs float64 rounding then
         # decides a strict `drop > 0` comparison.
@@ -839,20 +841,34 @@ class TestCodrLoop:
         emb = array_from_any(rng.normal(size=(V, D)).astype(np.float32))
         proj = array_from_any(rng.normal(size=(D, V)).astype(np.float32))
         weight = array_from_any(rng.uniform(0.5, 1.5, size=(64, 1)).astype(np.float32))
+        # mask_bias gives the mask token real probability mass, so a confidence
+        # computed without suppressing it differs from a suppressed one.
+        bias = mx.where(mx.arange(V) == TestReferenceLoop.MASK, mask_bias, 0.0)
 
         def model(x: mx.array) -> mx.array:
             h = emb[x]
             ctx = mx.mean(h * weight[: x.shape[1]], axis=1, keepdims=True)
-            return 3.0 * (h + ctx) @ proj
+            return 3.0 * (h + ctx) @ proj + bias
 
         return model
 
     @pytest.mark.parametrize(
-        ("seed", "block_len", "k"), [(0, 4, 2), (1, 3, 2), (2, 4, 3), (5, 6, 2)]
+        ("seed", "block_len", "k", "refill", "drift", "mask_bias"),
+        [
+            (0, 4, 2, 0.9, 0.0, 0.0),
+            (1, 3, 2, 0.9, 0.0, 0.0),
+            (2, 4, 3, 0.9, 0.0, 0.0),
+            (5, 6, 2, 0.9, 0.0, 0.0),
+            (0, 4, 2, 1.0, 0.0, 0.0),
+            (3, 4, 2, 0.0, 0.0, 0.0),
+            (1, 3, 2, 0.5, 0.05, 0.0),
+            (3, 4, 2, 0.9, 0.0, 20.0),
+            (4, 6, 3, 0.0, 0.0, 20.0),
+        ],
     )
-    def test_matches_the_reference_generate(self, seed, block_len, k):
+    def test_matches_the_reference_generate(self, seed, block_len, k, refill, drift, mask_bias):
         decode = _load_codr_loop()
-        model = self._model(seed)
+        model = self._model(seed, mask_bias)
         prompt = np.array([[1, 2, 3], [4, 5, 6]])
         out, forwards, remasked = decode(
             model,
@@ -860,6 +876,8 @@ class TestCodrLoop:
             gen_len=12,
             block_len=block_len,
             mask_id=self.MASK,
+            refill_threshold=refill,
+            drift_threshold=drift,
             num_partitions=k,
         )
         ref, nfe, ref_remasked = _codr_reference(
@@ -869,7 +887,8 @@ class TestCodrLoop:
             block_len=block_len,
             mask_id=self.MASK,
             threshold=0.9,
-            drift_threshold=0.0,
+            refill_threshold=refill,
+            drift_threshold=drift,
             k=k,
         )
         assert np.array_equal(np.array(out), ref)

@@ -253,7 +253,11 @@ evaluates LLaDA-8B-Instruct and Dream-7B (block length 32) with Fast-dLLM
 (`τ = 0.9`) and EB-Sampler, and all forwards see the full canvas without a
 KV cache. With a prefix cache, the probes mask positions inside the cached
 prefix, so they must run on the full window. The test suite executes this
-loop, which follows the reference `generate` step for step:
+loop. It follows the reference `generate` step for step, except that
+confidences are ranked and thresholded in float32 where the reference uses
+float64 for LLaDA. As with `threshold_transfer`, a confidence within one
+float32 ulp of the threshold, or a float32 near-tie, can resolve
+differently:
 
 <!-- codr-loop -->
 ```python
@@ -315,8 +319,8 @@ confidences use the same softmax. The reference computes LLaDA confidences
 over the full vocabulary and stops with an error if the model ever proposes
 the mask token. Here the mask id is suppressed instead, which renormalizes
 every confidence by the mass the model puts on the mask token. When that
-mass is negligible, the decisions match the reference; otherwise a
-threshold decision can move.
+mass is negligible, this changes nothing beyond the float32 caveat above;
+otherwise a threshold decision can move.
 
 ## Uniform-noise decoding (DiffusionGemma)
 
