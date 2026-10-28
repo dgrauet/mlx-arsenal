@@ -14,10 +14,13 @@ from mlx_arsenal._typing import array_from_any, item_float, item_int
 from mlx_arsenal.attention import block_causal_mask
 from mlx_arsenal.diffusion import (
     block_ranges,
+    drift_probe_masks,
+    drift_remask,
     edit_transfer,
     entropy_bound_transfer,
     factor_transfer,
     threshold_transfer,
+    token_prob,
     token_stats,
     topk_transfer,
     transfer_schedule,
@@ -668,3 +671,252 @@ class TestEditingLoop:
         decode(flipping, prompt, gen_len=9, block_len=4, mask_id=self.MASK, max_post_steps=2)
         assert seen
         assert all(w[:, :3].tolist() == [[5, 6, 7]] for w in seen)
+
+
+class TestTokenProb:
+    def test_matches_softmax_gather(self):
+        rng = np.random.default_rng(30)
+        logits = rng.normal(size=(2, 5, 11)).astype(np.float32) * 3
+        tokens = rng.integers(0, 11, size=(2, 5)).astype(np.int32)
+        out = token_prob(array_from_any(logits).astype(mx.bfloat16), array_from_any(tokens))
+        ref = np.take_along_axis(
+            _np_softmax(np.array(array_from_any(logits).astype(mx.bfloat16).astype(mx.float32))),
+            tokens[..., None],
+            axis=-1,
+        )[..., 0]
+        assert out.dtype == mx.float32
+        assert np.allclose(np.array(out), ref, atol=1e-6)
+
+    def test_agrees_with_token_stats_on_the_argmax(self):
+        logits = array_from_any(np.random.default_rng(31).normal(size=(2, 6, 9)).astype(np.float32))
+        stats = token_stats(logits, suppress_ids=[8])
+        out = token_prob(logits, stats.x0, suppress_ids=[8])
+        assert np.allclose(np.array(out), np.array(stats.prob), atol=1e-7)
+
+    def test_suppressed_ids_are_renormalized_away(self):
+        logits = array_from_any(np.random.default_rng(32).normal(size=(1, 4, 6)).astype(np.float32))
+        probs = _np_softmax(np.array(logits)[..., :5])
+        kept = token_prob(logits, mx.full((1, 4), 2, dtype=mx.int32), suppress_ids=[5])
+        gone = token_prob(logits, mx.full((1, 4), 5, dtype=mx.int32), suppress_ids=[5])
+        assert np.allclose(np.array(kept), probs[..., 2], atol=1e-6)
+        assert np.all(np.array(gone) == 0)
+
+    def test_rejects_bad_inputs(self):
+        logits = mx.zeros((1, 4, 6))
+        with pytest.raises(ValueError, match="rank 3"):
+            token_prob(mx.zeros((4, 6)), mx.zeros((1, 4), dtype=mx.int32))
+        with pytest.raises(ValueError, match="shape"):
+            token_prob(logits, mx.zeros((1, 3), dtype=mx.int32))
+        with pytest.raises(ValueError, match="integer"):
+            token_prob(logits, mx.zeros((1, 4)))
+        with pytest.raises(ValueError, match="suppress_ids"):
+            token_prob(logits, mx.zeros((1, 4), dtype=mx.int32), suppress_ids=[6])
+
+
+class TestDriftProbeMasks:
+    def test_example(self):
+        masks = np.array(drift_probe_masks(2, 7, 2))
+        assert masks.tolist() == [
+            [False, False, True, False, True, False, True],
+            [False, False, False, True, False, True, False],
+        ]
+
+    @pytest.mark.parametrize(
+        ("start", "length", "k"), [(0, 9, 2), (3, 14, 3), (5, 5, 2), (4, 6, 4)]
+    )
+    def test_partition_of_the_generated_span(self, start, length, k):
+        masks = np.array(drift_probe_masks(start, length, k))
+        assert masks.shape == (k, length)
+        assert np.array_equal(masks.sum(axis=0), (np.arange(length) >= start).astype(int))
+        for i in range(k):
+            assert np.array_equal(np.flatnonzero(masks[i]), np.arange(start + i, length, k))
+
+    def test_rejects_bad_arguments(self):
+        with pytest.raises(ValueError, match="start"):
+            drift_probe_masks(-1, 4)
+        with pytest.raises(ValueError, match="start"):
+            drift_probe_masks(5, 4)
+        with pytest.raises(ValueError, match="num_partitions"):
+            drift_probe_masks(0, 4, 1)
+
+
+class TestDriftRemask:
+    def test_strict_drop_on_eligible_positions(self):
+        commit = mx.array([[0.9, 0.9, 0.5, 0.95, 0.9]])
+        probe = mx.array([[0.6, 0.9, 0.7, 0.2, 0.1]])
+        eligible = mx.array([[True, True, True, True, False]])
+        out = drift_remask(commit, probe, eligible)
+        assert np.array(out).tolist() == [[True, False, False, True, False]]
+        out = drift_remask(commit, probe, eligible, threshold=0.3)
+        assert np.array(out).tolist() == [[False, False, False, True, False]]
+        out = drift_remask(commit, probe, eligible, threshold=-0.25)  # small rises too
+        assert np.array(out).tolist() == [[True, True, True, True, False]]
+
+    def test_mixed_float_dtypes(self):
+        commit = mx.array([[0.75, 0.5]], dtype=mx.bfloat16)
+        probe = mx.array([[0.5, 0.5]])
+        out = drift_remask(commit, probe, mx.array([[True, True]]))
+        assert np.array(out).tolist() == [[True, False]]
+
+    def test_rejects_bad_inputs(self):
+        p, e = mx.zeros((1, 3)), mx.ones((1, 3), dtype=mx.bool_)
+        with pytest.raises(ValueError, match="one shape"):
+            drift_remask(p, mx.zeros((1, 4)), e)
+        with pytest.raises(ValueError, match="bool"):
+            drift_remask(p, p, mx.ones((1, 3)))
+        with pytest.raises(ValueError, match="floating"):
+            drift_remask(mx.zeros((1, 3), dtype=mx.int32), p, e)
+        with pytest.raises(ValueError, match="finite"):
+            drift_remask(p, p, e, threshold=math.inf)
+
+
+def _load_codr_loop() -> Any:
+    note = Path(__file__).parents[1] / "docs" / "research" / "dllm-block-decoding.md"
+    match = re.search(r"<!-- codr-loop -->\s*```python\n(.*?)```", note.read_text(), re.S)
+    assert match, "CoDR loop not found in the research note"
+    namespace: dict[str, Any] = {}
+    exec(match.group(1), namespace)
+    return namespace["decode_codr"]
+
+
+def _codr_reference(
+    model, prompt, *, gen_len, block_len, mask_id, threshold, refill_threshold, drift_threshold, k
+):
+    """NumPy transliteration of CoDR's `generate` (Fast-dLLM sampler, LLaDA backbone)."""
+    x = np.concatenate([prompt, np.full((prompt.shape[0], gen_len), mask_id)], axis=1)
+    B, L = x.shape
+    P = prompt.shape[1]
+    pos = np.arange(L)
+    old = np.zeros((B, L))
+    parts = [(pos >= P) & ((pos - P) % k == i) for i in range(k)]
+    nfe = remasked = 0
+
+    def step(x, valid, thr):
+        nonlocal nfe
+        lg = np.array(model(array_from_any(x.astype(np.int32))), dtype=np.float64)
+        lg[..., mask_id] = -np.inf  # as suppress_ids=[mask_id]
+        probs = _np_softmax(lg)
+        prop = probs.argmax(-1)
+        conf = probs.max(-1)
+        transfer = valid & (conf >= thr)
+        best = np.where(valid, conf, -np.inf).argmax(1)
+        for b in range(B):
+            if valid[b].any():
+                transfer[b, best[b]] = True
+        nfe += 1
+        old[transfer] = conf[transfer]
+        x[transfer] = prop[transfer]
+
+    for start in range(P, L, block_len):
+        end = start + block_len
+        blk = (pos >= start) & (pos < end)
+        while ((x == mask_id) & blk).any():
+            step(x, (x == mask_id) & blk, threshold)
+        new = np.zeros((B, L))
+        for part in parts:
+            lg = np.array(
+                model(array_from_any(np.where(part, mask_id, x).astype(np.int32))), np.float64
+            )
+            lg[..., mask_id] = -np.inf
+            new[:, part] = np.take_along_axis(_np_softmax(lg), x[..., None], -1)[..., 0][:, part]
+            nfe += 1
+        rm = (pos >= P) & (pos < end) & (old - new > drift_threshold)
+        remasked += int(rm.sum())
+        x[rm] = mask_id
+        while (rm & (x == mask_id)).any():
+            step(x, rm & (x == mask_id), refill_threshold)
+    return x, nfe, remasked
+
+
+class TestCodrLoop:
+    MASK = TestReferenceLoop.MASK
+
+    @staticmethod
+    def _model(seed: int, mask_bias: float = 0.0):
+        # Position-weighted context: with a plain mean, two different contexts holding
+        # the same multiset of tokens tie exactly, and float32 vs float64 rounding then
+        # decides a strict `drop > 0` comparison.
+        rng = np.random.default_rng(seed)
+        V, D = TestReferenceLoop.V, TestReferenceLoop.D
+        emb = array_from_any(rng.normal(size=(V, D)).astype(np.float32))
+        proj = array_from_any(rng.normal(size=(D, V)).astype(np.float32))
+        weight = array_from_any(rng.uniform(0.5, 1.5, size=(64, 1)).astype(np.float32))
+        # mask_bias gives the mask token real probability mass, so a confidence
+        # computed without suppressing it differs from a suppressed one.
+        bias = mx.where(mx.arange(V) == TestReferenceLoop.MASK, mask_bias, 0.0)
+
+        def model(x: mx.array) -> mx.array:
+            h = emb[x]
+            ctx = mx.mean(h * weight[: x.shape[1]], axis=1, keepdims=True)
+            return 3.0 * (h + ctx) @ proj + bias
+
+        return model
+
+    @pytest.mark.parametrize(
+        ("seed", "block_len", "k", "refill", "drift", "mask_bias"),
+        [
+            (0, 4, 2, 0.9, 0.0, 0.0),
+            (1, 3, 2, 0.9, 0.0, 0.0),
+            (2, 4, 3, 0.9, 0.0, 0.0),
+            (5, 6, 2, 0.9, 0.0, 0.0),
+            (0, 4, 2, 1.0, 0.0, 0.0),
+            (3, 4, 2, 0.0, 0.0, 0.0),
+            (1, 3, 2, 0.5, 0.05, 0.0),
+            (3, 4, 2, 0.9, 0.0, 20.0),
+            (4, 6, 3, 0.0, 0.0, 20.0),
+        ],
+    )
+    def test_matches_the_reference_generate(self, seed, block_len, k, refill, drift, mask_bias):
+        decode = _load_codr_loop()
+        model = self._model(seed, mask_bias)
+        prompt = np.array([[1, 2, 3], [4, 5, 6]])
+        out, forwards, remasked = decode(
+            model,
+            array_from_any(prompt.astype(np.int32)),
+            gen_len=12,
+            block_len=block_len,
+            mask_id=self.MASK,
+            refill_threshold=refill,
+            drift_threshold=drift,
+            num_partitions=k,
+        )
+        ref, nfe, ref_remasked = _codr_reference(
+            model,
+            prompt,
+            gen_len=12,
+            block_len=block_len,
+            mask_id=self.MASK,
+            threshold=0.9,
+            refill_threshold=refill,
+            drift_threshold=drift,
+            k=k,
+        )
+        assert np.array_equal(np.array(out), ref)
+        assert (forwards, remasked) == (nfe, ref_remasked)
+
+    def test_exercises_remasking(self):
+        # Guard against a vacuous parity: the toy model does drift.
+        total = 0
+        for seed in (0, 1, 2, 5):
+            _, _, remasked = _load_codr_loop()(
+                self._model(seed),
+                mx.array([[1, 2, 3], [4, 5, 6]], dtype=mx.int32),
+                gen_len=12,
+                block_len=4,
+                mask_id=self.MASK,
+            )
+            total += remasked
+        assert total > 0
+
+    def test_no_drift_allowed_is_the_plain_loop_plus_probes(self):
+        model = self._model(4)
+        prompt = mx.array([[1, 2, 3], [4, 5, 6]], dtype=mx.int32)
+        out, forwards, remasked = _load_codr_loop()(
+            model, prompt, gen_len=12, block_len=4, mask_id=self.MASK, drift_threshold=1.0
+        )
+        ref, ref_forwards = _load_reference_loop()(
+            model, prompt, gen_len=12, block_len=4, mask_id=self.MASK
+        )
+        assert remasked == 0
+        assert np.array_equal(np.array(out), np.array(ref))
+        assert forwards == ref_forwards + 2 * len(block_ranges(3, 12, 4))

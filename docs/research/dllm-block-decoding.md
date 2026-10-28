@@ -38,6 +38,7 @@ caller.
 | `factor_transfer` | longest prefix with `(i+1)(1 − c_(i)) ≤ f` | Fast-dLLM `get_transfer_index_dynamic` |
 | `entropy_bound_transfer` | longest low-entropy prefix with `Σ_{j<i} H_(j) ≤ γ` | EB-Sampler, DiffusionGemma acceptance |
 | `edit_transfer` | revise committed tokens when `x0 ≠ token` and `p > τ_edit` | LLaDA2.1/2.2 `editing_threshold`, Nemotron-Labs, SGLang JointThreshold |
+| `token_prob`, `drift_probe_masks`, `drift_remask` | re-score committed tokens under stride-class probe forwards, remask those whose confidence dropped | CoDR `generation.py` (`drift_threshold`, `num_partitions`) |
 | `apply_block_edits` | consume DELETE / SPLIT tokens in a fixed-length block, tracking original masks | LLaDA2.2, SGLang `JointThresholdInDel` |
 | `linear_temperature`, `uniform_canvas`, `renoise`, `StableConfidentStopping` | uniform-noise decoding: temperature schedule, random canvas, re-noising, stable-and-confident stop | Hugging Face `generation_diffusion_gemma.py` |
 | `transfer_schedule` | `(B, steps)` linear quotas | Fast-dLLM / LLaDA `get_num_transfer_tokens` |
@@ -230,6 +231,97 @@ def indel_step(logits, block, is_orig, *, prompt_len, mask_id, delete_id, split_
                              delete_id=delete_id, split_id=split_id)
 ```
 
+## Confidence-drift remasking (CoDR)
+
+CoDR (Wu et al., arXiv 2610.08833, EMNLP; Apache-2.0 code) is a
+training-free repair pass for greedy block decoding. After each finished
+block it asks whether the tokens committed so far still look right in the
+context that now surrounds them:
+
+1. Every commit records the token's confidence at that moment.
+2. After the block, `k` probe forwards (`k = 2` by default) each mask one
+   stride class of the generated span (`(p − P) % k == i`) and read the
+   model's confidence in the original tokens there. Every generated position
+   is probed once, including earlier blocks.
+3. A token whose commit-time confidence exceeds its probe confidence by
+   more than `τ_drift` (default `0`, the best value in the paper's ablation
+   over 0–0.30) is remasked, and the remasked positions are refilled with
+   the same commit rule (optionally another threshold).
+
+The cost is `k` forwards per block plus the refill steps. The paper
+evaluates LLaDA-8B-Instruct and Dream-7B (block length 32) with Fast-dLLM
+(`τ = 0.9`) and EB-Sampler, and all forwards see the full canvas without a
+KV cache. With a prefix cache, the probes mask positions inside the cached
+prefix, so they must run on the full window. The test suite executes this
+loop. It follows the reference `generate` step for step, except that
+confidences are ranked and thresholded in float32 where the reference uses
+float64 for LLaDA. As with `threshold_transfer`, a confidence within one
+float32 ulp of the threshold, or a float32 near-tie, can resolve
+differently:
+
+<!-- codr-loop -->
+```python
+import mlx.core as mx
+
+from mlx_arsenal.diffusion import (
+    block_ranges,
+    drift_probe_masks,
+    drift_remask,
+    threshold_transfer,
+    token_prob,
+    token_stats,
+)
+
+
+def decode_codr(model, prompt, *, gen_len, block_len, mask_id, threshold=0.9,
+                refill_threshold=None, drift_threshold=0.0, num_partitions=2):
+    """Threshold block decoding with a CoDR pass after every block."""
+    B, P = prompt.shape
+    L = P + gen_len
+    x = mx.concatenate([prompt, mx.full((B, gen_len), mask_id, dtype=prompt.dtype)], axis=1)
+    positions = mx.arange(L)
+    probes = drift_probe_masks(P, L, num_partitions)
+    refill_threshold = threshold if refill_threshold is None else refill_threshold
+    commit_prob = mx.zeros((B, L))
+    forwards = remasked = 0
+
+    def fill(x, commit_prob, candidates, threshold):
+        nonlocal forwards
+        while True:
+            open_ = candidates & (x == mask_id)
+            if not mx.any(open_).item():
+                return x, commit_prob
+            stats = token_stats(model(x), suppress_ids=[mask_id])
+            forwards += 1
+            commit = threshold_transfer(stats.prob, open_, threshold)
+            x = mx.where(commit, stats.x0.astype(x.dtype), x)
+            commit_prob = mx.where(commit, stats.prob, commit_prob)
+
+    for start, end in block_ranges(P, gen_len, block_len):
+        in_block = (positions >= start) & (positions < end)
+        x, commit_prob = fill(x, commit_prob, in_block, threshold)
+        probe_prob = mx.zeros((B, L))
+        for probe in probes:
+            logits = model(mx.where(probe, mask_id, x))
+            forwards += 1
+            probe_prob = mx.where(probe, token_prob(logits, x, suppress_ids=[mask_id]), probe_prob)
+        eligible = mx.broadcast_to((positions >= P) & (positions < end), (B, L))
+        remask = drift_remask(commit_prob, probe_prob, eligible, drift_threshold)
+        remasked += mx.sum(remask).item()
+        x = mx.where(remask, mask_id, x)
+        x, commit_prob = fill(x, commit_prob, remask, refill_threshold)
+    return x, forwards, remasked
+```
+
+The `fill` helper is the reference loop above with the confidences kept.
+Pass the same `suppress_ids` to `token_stats` and `token_prob`, so both
+confidences use the same softmax. The reference computes LLaDA confidences
+over the full vocabulary and stops with an error if the model ever proposes
+the mask token. Here the mask id is suppressed instead, which renormalizes
+every confidence by the mass the model puts on the mask token. When that
+mass is negligible, this changes nothing beyond the float32 caveat above;
+otherwise a threshold decision can move.
+
 ## Uniform-noise decoding (DiffusionGemma)
 
 DiffusionGemma does not use a mask token. A canvas starts as uniformly
@@ -353,6 +445,21 @@ flipping a near-tie (0.327 vs 0.326), not the commit rules:
   uncached window and a prefix cache therefore disagree; with the same
   cache path the run matches.
 
+### CoDR parity with the reference (2026-10)
+
+The CoDR loop above was run against the official PyTorch `generate`
+(commit 4db32cd, LLaDA backbone, Fast-dLLM sampler) on the same toy model.
+The two frameworks share the weights, and the mask logit is set to −30 so
+that suppressing it changes nothing. Over 36 cases (6 seeds, three
+block-length / `k` pairs, `τ_drift ∈ {0, 0.1}`, 24 generated tokens), the
+tokens, the forward counts and the remask counts were all identical, with
+2,630 remasks exercised. With a context that ignores positions, distinct
+contexts can tie exactly. At `τ_drift = 0` the strict comparison is then
+decided by rounding, so float32 and float64 runs remask different tokens.
+The toy model weights positions to avoid that; a real model can hit the
+same ties, in the reference as well. No real-model run was made: the
+paper's models (LLaDA-8B, Dream-7B) are not in the local cache.
+
 ## Out of scope, and why
 
 - **KV caches** (prefix / dual cache, refresh policies): a training-free
@@ -377,4 +484,5 @@ flipping a near-tie (0.327 vs 0.326), not the commit rules:
 - dInfer: <https://github.com/inclusionAI/dInfer>
 - SGLang dLLM: <https://github.com/sgl-project/sglang/tree/main/python/sglang/srt/dllm>
 - EB-Sampler: <https://arxiv.org/abs/2505.24857>
+- CoDR: <https://arxiv.org/abs/2610.08833>, code <https://github.com/YueWu0301/CoDR> (Apache-2.0)
 - mlx-vlm diffusion engine: <https://github.com/Blaizzy/mlx-vlm>
