@@ -1,4 +1,4 @@
-"""Guidance rules: PMC-CFG and normalized attention guidance (NAG).
+"""Guidance rules: PMC-CFG, TrajCFG token-wise scales and normalized attention guidance (NAG).
 
 PMC-CFG: posterior-mean-capped classifier-free guidance for flow matching.
 
@@ -10,12 +10,20 @@ guided posterior mean stays within ``Γ`` times the norm of the conditional
 one. The cap releases by itself late in sampling, when the conditional and
 unconditional estimates agree. No extra model evaluations.
 
+TrajCFG: token-wise CFG scales from the guided-velocity history. Tokens
+whose guided velocity keeps its direction from step to step get a weaker
+scale, tokens whose direction turns get a stronger one
+(:func:`trajectory_guidance_scale`). No extra model evaluations.
+
 References:
     https://arxiv.org/abs/2609.24287
+    https://arxiv.org/abs/2610.14153
 """
 
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
 from typing import Any
 
 import mlx.core as mx
@@ -97,6 +105,107 @@ def posterior_mean_capped_guidance(
     beta = mx.where(a > 0, beta_cap, nominal)
     guided = vc + beta[:, None] * (vc - vu)
     return guided.reshape(cond.shape).astype(cond.dtype)
+
+
+def _stable_cosine(a: mx.array, b: mx.array, eps: float) -> mx.array:
+    """Per-token cosine over the last axis, norms floored at ``eps``, clipped to [-1, 1]."""
+    a32, b32 = a.astype(mx.float32), b.astype(mx.float32)
+    dot = mx.sum(a32 * b32, axis=-1, keepdims=True)
+    na = mx.maximum(mx.sqrt(mx.sum(a32 * a32, axis=-1, keepdims=True)), eps)
+    nb = mx.maximum(mx.sqrt(mx.sum(b32 * b32, axis=-1, keepdims=True)), eps)
+    return mx.clip(dot / (na * nb), -1.0, 1.0)
+
+
+def trajectory_guidance_scale(
+    history: Sequence[mx.array],
+    sigmas: Sequence[float],
+    *,
+    min_scale: float,
+    max_scale: float,
+    rho_lo: float = 0.95,
+    long_weight: float = 0.2,
+    eps: float = 1e-6,
+) -> mx.array:
+    """Token-wise CFG scale from the directions of past guided velocities (TrajCFG).
+
+    TrajCFG (arXiv 2610.14153) gives each token its own guidance scale. The
+    signal is the cosine ``q`` between the guided velocities a token received
+    at the two previous steps, mapped linearly to a scale::
+
+        g(q) = min_scale + (max_scale - min_scale) * clip((1 - q) / (1 - rho_lo), 0, 1)
+
+    so a token whose direction did not change gets ``min_scale`` and one whose
+    cosine fell to ``rho_lo`` or below gets ``max_scale``. With three past
+    velocities, the stride-2 cosine (oldest vs latest) also votes: its angle
+    is first shrunk to the adjacent interval,
+    ``cos(arccos(q2) * |σ[-1] - σ[-2]| / |σ[-1] - σ[-3]|)``, and the two
+    scales are blended ``(1 - long_weight) * g(q1) + long_weight * g(q2')``.
+
+    The caller keeps the history (the last two or three guided velocities
+    actually passed to the solver, oldest first, with their sigmas), uses
+    its base scale for the first two steps, and guides with
+    ``uncond + scale * (cond - uncond)``. The paper adapts every later step.
+
+    A token is a vector along the **last** axis: a latent pixel for a
+    channels-last ``(B, H, W, C)`` latent, a patch for a packed
+    ``(B, L, C·p²)`` one. The paper uses the latent sites the backbone's
+    pipeline exposes and does not compare the two.
+
+    Args:
+        history: Two or three past guided velocities, oldest first, same
+            shape ``(..., C)``.
+        sigmas: Their noise levels (or any time variable affine in them),
+            same length, strictly monotonic.
+        min_scale: Scale for a token whose direction did not change, ``>= 0``.
+        max_scale: Scale at or below ``rho_lo``, ``> min_scale``.
+        rho_lo: Cosine at which the scale saturates, in ``[-1, 1)``. The
+            paper uses 0.95 (0.90 for some video models).
+        long_weight: Weight of the stride-2 term when three velocities are
+            given, in ``[0, 1]``. Paper: 0.2.
+        eps: Floor on velocity norms in the cosine, ``> 0``.
+
+    Returns:
+        ``(..., 1)`` float32 scales, broadcasting against the velocity.
+
+    References:
+        https://arxiv.org/abs/2610.14153 (reimplemented from the paper; the
+        reference code has no licence)
+    """
+    if len(history) not in (2, 3):
+        raise ValueError(f"history must hold 2 or 3 velocities, got {len(history)}")
+    if len(sigmas) != len(history):
+        raise ValueError(f"sigmas must match history: {len(sigmas)} vs {len(history)}")
+    shapes = {tuple(v.shape) for v in history}
+    if len(shapes) != 1:
+        raise ValueError(f"history velocities must share one shape, got {sorted(shapes)}")
+    if history[0].ndim < 1:
+        raise ValueError("history velocities need a channel axis")
+    if not 0.0 <= min_scale < max_scale or not math.isfinite(max_scale):
+        raise ValueError(f"need 0 <= min_scale < max_scale < inf, got {min_scale} and {max_scale}")
+    if not -1.0 <= rho_lo < 1.0:
+        raise ValueError(f"rho_lo must be in [-1, 1), got {rho_lo}")
+    if not 0.0 <= long_weight <= 1.0:
+        raise ValueError(f"long_weight must be in [0, 1], got {long_weight}")
+    if not eps > 0.0:
+        raise ValueError(f"eps must be > 0, got {eps}")
+    if not all(math.isfinite(s) for s in sigmas):
+        raise ValueError(f"sigmas must be finite, got {list(sigmas)}")
+    steps = [b - a for a, b in zip(sigmas[:-1], sigmas[1:], strict=True)]
+    if not (all(d < 0 for d in steps) or all(d > 0 for d in steps)):
+        raise ValueError(f"sigmas must be strictly monotonic, got {list(sigmas)}")
+    short = abs(steps[-1])
+
+    def g(q: mx.array) -> mx.array:
+        ramp = mx.clip((1.0 - q) / (1.0 - rho_lo), 0.0, 1.0)
+        return min_scale + (max_scale - min_scale) * ramp
+
+    scale = g(_stable_cosine(history[-2], history[-1], eps))
+    if len(history) == 3:
+        ratio = short / abs(sigmas[-1] - sigmas[-3])
+        q_long = _stable_cosine(history[-3], history[-1], eps)
+        q_norm = mx.cos(ratio * mx.arccos(q_long))
+        scale = (1.0 - long_weight) * scale + long_weight * g(q_norm)
+    return scale
 
 
 def normalized_attention_guidance(
