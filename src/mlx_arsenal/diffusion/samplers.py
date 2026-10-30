@@ -30,7 +30,7 @@ def euler_step(x: mx.array, x0: mx.array, sigma: float, sigma_next: float) -> mx
 def classifier_free_guidance(
     cond: mx.array,
     uncond: mx.array,
-    scale: float,
+    scale: float | mx.array,
 ) -> mx.array:
     """Apply classifier-free guidance.
 
@@ -41,7 +41,9 @@ def classifier_free_guidance(
     Args:
         cond: Conditioned prediction.
         uncond: Unconditioned prediction (same shape as ``cond``).
-        scale: Guidance scale.
+        scale: Guidance scale; an array broadcasting against ``cond`` gives
+            per-token scales (e.g.
+            :func:`~mlx_arsenal.diffusion.trajectory_guidance_scale`).
 
     Returns:
         Guided prediction.

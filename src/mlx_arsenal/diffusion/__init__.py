@@ -9,7 +9,11 @@ from .cfg_skip import (
     cfg_skip_mask,
 )
 from .ddim import DDIMScheduler
-from .guidance import normalized_attention_guidance, posterior_mean_capped_guidance
+from .guidance import (
+    normalized_attention_guidance,
+    posterior_mean_capped_guidance,
+    trajectory_guidance_scale,
+)
 from .mask_reuse import HeadMaskCache, pooled_qk, qk_drift
 from .masked_decode import (
     TokenStats,
@@ -90,6 +94,7 @@ __all__ = [
     "token_prob",
     "token_stats",
     "topk_transfer",
+    "trajectory_guidance_scale",
     "transfer_schedule",
     "uniform_canvas",
 ]
