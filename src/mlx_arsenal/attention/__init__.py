@@ -16,6 +16,7 @@ from mlx_arsenal.attention.dynamic_masks import (
     radius_bounded_block_scores,
     relative_block_mask,
     select_tiling,
+    skip_error_block_scores,
     top_k_block_mask,
     top_p_block_mask,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "relative_block_mask",
     "select_probe_rows",
     "select_tiling",
+    "skip_error_block_scores",
     "sliding_tile_block_mask",
     "sliding_tile_centered_mask",
     "sliding_window_mask",

@@ -30,6 +30,10 @@ within ``α`` of the row maximum).
 Sol-Attn (arXiv 2607.24027) routes from block centroids alone:
 :func:`centroid_threshold_block_mask` keeps the key blocks whose centroid
 score clears a per-row ``mean + τ·std`` threshold, plus a diagonal band.
+
+Triage (arXiv 2610.35706) ranks blocks by the error of skipping them rather
+than by mass: :func:`skip_error_block_scores` predicts, from block moments,
+how much replacing a key block by its centroid changes the output.
 """
 
 from __future__ import annotations
@@ -539,3 +543,148 @@ def centroid_threshold_block_mask(
     near = mx.abs(mx.arange(Cq)[:, None] - mx.arange(Ck)[None, :]) <= band
     keep = (scores > thr[..., None]) | near
     return mx.where(keep, 0.0, float("-inf")).astype(mx.float32)
+
+
+def _pad_blocks(x: mx.array, block_size: int) -> tuple[mx.array, mx.array]:
+    """Zero-padded float32 ``(B, H, nb, block_size, D)`` blocks and the token validity."""
+    B, H, N, D = x.shape
+    nb = -(-N // block_size)
+    pad = nb * block_size - N
+    xf = x.astype(mx.float32)
+    if pad:
+        xf = mx.pad(xf, [(0, 0), (0, 0), (0, pad), (0, 0)])
+    valid = (mx.arange(nb * block_size) < N).reshape(nb, block_size)
+    return xf.reshape(B, H, nb, block_size, D), valid
+
+
+def skip_error_block_scores(
+    q: mx.array,
+    k: mx.array,
+    v: mx.array,
+    *,
+    block_size: int = 64,
+    head_energy: mx.array | None = None,
+    scale: float | None = None,
+) -> mx.array:
+    """Triage's predicted error of replacing each key block by its centroid.
+
+    :func:`~mlx_arsenal.attention.block_sparse_attention` with
+    ``compensate=True`` replaces a skipped key block by its mean key (with a
+    ``log L`` logit bias) and its mean value. Mass scores rank blocks by how
+    much attention they carry; Triage (arXiv 2610.35706) ranks them by how
+    much that replacement would change the output. Per query block ``I`` and
+    key block ``β``, with ``s`` the logit scale::
+
+        J = 1 − exp(−s²·‖q‖²·tr Σ_K / 2D)        lost softmax weight
+        R = s·‖q‖·‖Σ_KV‖_F / (√D·‖v̄‖)            mean-value shift
+        E = m̃·(J + R)·√w_h
+
+    ``‖q‖²`` is the mean squared query norm of ``I``; ``Σ_K`` and ``Σ_KV``
+    are the key covariance and key-value covariance of ``β``, ``v̄`` its mean
+    value (norm floored at ``1e-6``). The block mass ``m̃`` averages two
+    estimates that each sum to 1 over the row: the mean query against every
+    key with a query-variance correction, and every query against the
+    ``log L``-biased centroids, divided by ``1 − J``. ``w_h`` is the head's
+    output energy relative to the mean over heads, so errors compare across
+    heads.
+
+    Higher is worse to skip. Keep a fixed budget with
+    :func:`top_k_block_mask`, or apply Triage's single price ``π`` across
+    heads and lengths, which keeps a block when ``Ck·E ≥ π``
+    (``Ck = ceil(Nk / block_size)``)::
+
+        mask = mx.where(Ck * err >= price, 0.0, -mx.inf)
+
+    The paper fixes ``α = 0.22`` and ``c_rf = 3`` for its two NVFP4 tiers;
+    with only "exact" and "skip" those constants drop out. Its reported
+    prices (0.15, 0.3) are for the three-tier kernel and do not transfer.
+
+    Blocks are ``block_size`` consecutive tokens (the last may be partial),
+    one cluster per block: the paper pairs two 64-key clusters per 128-key
+    tile and clusters tokens with a PDDP tree first. Permute tokens before
+    calling, as for :func:`~mlx_arsenal.attention.block_sparse_attention`.
+
+    It scores every query against every key centroid and the mean query of
+    every block against every key, so it holds ``(B, H, Nq, Ck)`` and
+    ``(B, H, Cq, Nk)`` float32 tensors: call it per head at video lengths.
+
+    Args:
+        q: ``(B, H, Nq, D)`` queries in block order.
+        k: ``(B, H, Nk, D)`` keys in block order, same ``(B, H)``.
+        v: ``(B, H, Nk, Dv)`` values.
+        block_size: Tokens per block, ``>= 1``.
+        head_energy: ``(H,)`` or ``(B, H)`` mean squared output norm of each
+            head at the layer's previous call, e.g.
+            ``mx.mean(mx.sum(o * o, axis=-1), axis=-1)``. Defaults to
+            ``‖mean(v)‖²`` per head, the paper's first-call value.
+        scale: Logit scale. Defaults to ``1 / sqrt(D)``.
+
+    Returns:
+        ``(B, H, ceil(Nq / block_size), ceil(Nk / block_size))`` float32
+        predicted relative output errors, non-negative.
+    """
+    if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
+        raise ValueError(f"q, k, v must have rank 4, got {q.ndim}, {k.ndim}, {v.ndim}")
+    B, H, Nq, D = q.shape
+    Nk = k.shape[2]
+    if k.shape[:2] != q.shape[:2] or v.shape[:2] != q.shape[:2]:
+        raise ValueError(
+            f"q, k, v must share (batch, heads), got {q.shape[:2]}, {k.shape[:2]}, {v.shape[:2]}"
+        )
+    if v.shape[2] != Nk:
+        raise ValueError(f"k and v key length differ: {Nk} vs {v.shape[2]}")
+    if k.shape[3] != D:
+        raise ValueError(f"q and k head dim differ: {D} vs {k.shape[3]}")
+    if Nq == 0 or Nk == 0:
+        raise ValueError(f"query and key sequences must be non-empty, got Nq={Nq}, Nk={Nk}")
+    if block_size < 1:
+        raise ValueError(f"block_size must be >= 1, got {block_size}")
+    if head_energy is not None and tuple(head_energy.shape) not in ((H,), (B, H)):
+        raise ValueError(
+            f"head_energy must have shape ({H},) or ({B}, {H}), got {head_energy.shape}"
+        )
+    s = 1.0 / math.sqrt(D) if scale is None else scale
+    neg = float("-inf")
+
+    qb, q_ok = _pad_blocks(q, block_size)  # (B, H, Cq, bs, D)
+    kb, k_ok = _pad_blocks(k, block_size)
+    vb, _ = _pad_blocks(v, block_size)
+    qn = q_ok.sum(-1).astype(mx.float32)  # (Cq,) tokens per block
+    kn = k_ok.sum(-1).astype(mx.float32)
+    q_bar = qb.sum(3) / qn[:, None]  # padding is zero
+    q_sq = (qb * qb).sum((3, 4)) / qn  # (B, H, Cq) mean ‖q‖²
+    q_var = mx.maximum(q_sq - (q_bar * q_bar).sum(-1), 0.0)
+    k_bar = kb.sum(3) / kn[:, None]
+    v_bar = vb.sum(3) / kn[:, None]
+    kc = (kb - k_bar[:, :, :, None]) * k_ok[:, :, None]
+    vc = (vb - v_bar[:, :, :, None]) * k_ok[:, :, None]
+    k_tr = (kc * kc).sum((3, 4)) / kn  # (B, H, Ck) tr Σ_K
+    # ‖K̃ᵀṼ‖_F² through the two (bs, bs) Gram matrices: cheaper than D × Dv.
+    gram = (kc @ kc.swapaxes(-1, -2)) * (vc @ vc.swapaxes(-1, -2))
+    kv_fro = mx.sqrt(mx.maximum(gram.sum((3, 4)), 0.0)) / kn
+    v_norm = mx.maximum(mx.linalg.norm(v_bar, axis=-1), 1e-6)
+
+    # x = −log(1 − J), kept in the log domain so 1/(1 − J) cannot overflow.
+    x = (s * s / (2.0 * D)) * q_sq[..., None] * k_tr[:, :, None, :]  # (B, H, Cq, Ck)
+    J = -mx.expm1(-x)
+    R = (s / math.sqrt(D)) * mx.sqrt(q_sq)[..., None] * (kv_fro / v_norm)[:, :, None, :]
+
+    # Mass a: mean query against every key, with the query-variance correction.
+    kf = kb.reshape(B, H, -1, D)
+    corr = (s * s / (2.0 * D)) * q_var[..., None] * (kf * kf).sum(-1)[:, :, None, :]
+    la = s * (q_bar @ kf.swapaxes(-1, -2)) + corr  # (B, H, Cq, Ck·bs)
+    la = mx.where(k_ok.reshape(-1), la, neg).reshape(*la.shape[:3], -1, block_size)
+    a = mx.softmax(mx.logsumexp(la, axis=-1), axis=-1)
+    # Mass b: every query against the log L-biased centroids, averaged per block.
+    lb = s * (qb.reshape(B, H, -1, D) @ k_bar.swapaxes(-1, -2)) + mx.log(kn)
+    pb = mx.softmax(lb, axis=-1) * q_ok.reshape(-1)[:, None]
+    pb = pb.reshape(B, H, -1, block_size, pb.shape[-1]).sum(3) / qn[:, None]
+    b = mx.softmax(mx.log(pb) + x, axis=-1)
+    mass = 0.5 * (a + b)
+
+    if head_energy is None:
+        energy = (mx.mean(v.astype(mx.float32), axis=2) ** 2).sum(-1)  # (B, H)
+    else:
+        energy = mx.broadcast_to(head_energy.astype(mx.float32), (B, H))
+    w = energy / mx.maximum(mx.mean(energy, axis=-1, keepdims=True), 1e-30)
+    return mass * (J + R) * mx.sqrt(w)[..., None, None]
