@@ -213,6 +213,8 @@ scope.
 
 ## References
 
+- [ADR-0002 gate log](../research/block-sparse-kernel-gates.md) — dated
+  status of the four phase-2 gates
 - [Sol-Attn (arXiv 2607.24027)](https://arxiv.org/abs/2607.24027) and
   [NVlabs/Sana](https://github.com/NVlabs/Sana) (`sol-engine` branch)
 - [SVG-EAR (arXiv 2603.08982)](https://arxiv.org/abs/2603.08982) — the

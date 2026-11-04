@@ -478,7 +478,8 @@ def centroid_threshold_block_mask(
 ) -> mx.array:
     """Keep key blocks whose centroid score clears a per-row ``mean + τ·std`` threshold.
 
-    Sol-Attn's routing rule (arXiv 2607.24027, "diag" threshold). Every
+    Sol-Attn's routing rule (arXiv 2607.24027: Eq. 4 with the diagonal
+    estimator of Appendix B, Eq. 15). Every
     block of ``block_size`` consecutive tokens is summarized by its mean
     query ``q̄_i`` and mean key ``k̄_j`` (the last block may be partial), and
     key block ``j`` is kept for query block ``i`` when::
@@ -490,7 +491,8 @@ def centroid_threshold_block_mask(
     and standard deviation of row ``i``'s centroid scores, treating the key
     dimensions as independent. Blocks with ``|i - j| <= band`` are always
     kept. Scores are compared in ``scale · log2(e)`` units with a ``1e-6``
-    floor under the square root, as in the reference.
+    floor under the square root. The band and the floor are implementation
+    choices that match the ltx-2-mlx port; the paper has neither.
 
     Sol's LTX-2.5 configuration uses ``τ = 1.0, 1.25, 1.5`` over its three
     refine steps; such schedules, dense first blocks and extra forced blocks
