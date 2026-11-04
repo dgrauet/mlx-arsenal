@@ -31,6 +31,11 @@ from mlx_arsenal.attention._thw import thw_coords as _thw_coords
 from mlx_arsenal.attention._thw import validate_thw as _validate_thw
 
 _STD_FLOOR = 1e-6
+#: Most mask elements one dense SDPA call materializes; longer inputs run in
+#: chunks of query rows. MLX <= 0.32.4 concatenates wrongly past 2^31
+#: elements (fixed upstream in ml-explore/mlx#4758, unreleased), and the
+#: chunks also bound the dense backend's peak memory.
+_MASK_ELEMENTS = 2**30
 
 
 def tile_labels(T: int, H: int, W: int, *, tile: tuple[int, int, int]) -> mx.array:
@@ -144,6 +149,9 @@ def centroid_compensated_attention(
         (`4 ≤ log n_c < 8`), i.e. up to ~1.6% on that centroid's weight — the
         same order as the rounding of the bfloat16 `q·k` logits themselves.
         Pass float32 inputs when this tool is used as a numerical reference.
+
+        Long inputs run in chunks of query rows, each with a mask of at most
+        2^30 elements; the result does not depend on the chunking.
     """
     if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
         raise ValueError(f"q, k, v must have rank 4, got {q.ndim}, {k.ndim}, {v.ndim}")
@@ -207,20 +215,29 @@ def _centroid_attention(
     k_bar = (onehot_t @ k.astype(mx.float32)) * inv_counts  # (B, H, Ck, D)
     v_bar = (onehot_t @ v.astype(mx.float32)) * inv_counts
 
-    ql_b = mx.broadcast_to(ql, (Lb, Lh, Sq))
-    kl_b = mx.broadcast_to(kl, (Lb, Lh, Sk))
-    keep_rows = mx.take_along_axis(keep, mx.expand_dims(ql_b, -1), axis=-2)  # (Lb, Lh, Sq, Ck)
-    keep_tok = mx.take_along_axis(keep_rows, mx.expand_dims(kl_b, -2), axis=-1)  # (Lb, Lh, Sq, Sk)
+    kl_b = mx.expand_dims(mx.broadcast_to(kl, (Lb, Lh, Sk)), -2)
     zero = mx.array(0.0, dtype=q.dtype)
     neg_inf = mx.array(float("-inf"), dtype=q.dtype)
-    tok_mask = mx.where(keep_tok, zero, neg_inf)
     log_n = mx.expand_dims(mx.log(counts), -2).astype(q.dtype)  # -inf for empty clusters
-    cent_mask = mx.where(keep_rows, neg_inf, log_n)
-    mask = mx.concatenate([tok_mask, cent_mask], axis=-1)
-
     k_ext = mx.concatenate([k, k_bar.astype(k.dtype)], axis=2)
     v_ext = mx.concatenate([v, v_bar.astype(v.dtype)], axis=2)
-    return mx.fast.scaled_dot_product_attention(q, k_ext, v_ext, scale=scale, mask=mask)
+
+    rows = max(1, _MASK_ELEMENTS // (Lb * Lh * (Sk + Ck)))
+    outs = []
+    for r0 in range(0, Sq, rows):
+        r1 = min(r0 + rows, Sq)
+        ql_b = mx.broadcast_to(ql[..., r0:r1], (Lb, Lh, r1 - r0))
+        keep_rows = mx.take_along_axis(keep, mx.expand_dims(ql_b, -1), axis=-2)  # (Lb, Lh, r, Ck)
+        keep_tok = mx.take_along_axis(keep_rows, kl_b, axis=-1)  # (Lb, Lh, r, Sk)
+        tok_mask = mx.where(keep_tok, zero, neg_inf)
+        cent_mask = mx.where(keep_rows, neg_inf, log_n)
+        mask = mx.concatenate([tok_mask, cent_mask], axis=-1)
+        outs.append(
+            mx.fast.scaled_dot_product_attention(
+                q[:, :, r0:r1], k_ext, v_ext, scale=scale, mask=mask
+            )
+        )
+    return outs[0] if len(outs) == 1 else mx.concatenate(outs, axis=2)
 
 
 def _middle_out(n: int) -> list[int]:

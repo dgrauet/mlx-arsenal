@@ -20,6 +20,7 @@ import math
 
 import mlx.core as mx
 
+from mlx_arsenal.attention import compensation
 from mlx_arsenal.attention.compensation import _centroid_attention
 
 
@@ -73,10 +74,11 @@ def block_sparse_attention(
     integer masks are rejected: convert a "1 = keep" route with
     ``mx.where(route, 0.0, -mx.inf)``.
 
-    The dense backend materializes a ``(1|B, 1|H, Sq, Sk + Ck)`` mask in
-    ``q.dtype`` (``(1|B, 1|H, Sq, Sk)`` booleans without compensation), per
-    batch and head only when ``block_mask`` varies over them. At video
-    lengths, call it per head slice.
+    The dense backend materializes a ``(1|B, 1|H, rows, Sk + Ck)`` mask in
+    ``q.dtype`` (``(1|B, 1|H, rows, Sk)`` booleans without compensation),
+    per batch and head only when ``block_mask`` varies over them, and runs
+    the query rows in chunks that keep each mask under 2^30 elements. This
+    also avoids MLX <= 0.32.4 concatenating wrongly past 2^31 elements.
 
     Args:
         q: ``(B, H, Sq, D)`` queries.
@@ -133,5 +135,16 @@ def block_sparse_attention(
         ql = (mx.arange(Sq, dtype=mx.int32) // block_size).reshape(1, 1, Sq)
         kl = (mx.arange(Sk, dtype=mx.int32) // block_size).reshape(1, 1, Sk)
         return _centroid_attention(q, k, v, ql, kl, keep, s)
-    tok = mx.repeat(mx.repeat(keep, block_size, axis=-2), block_size, axis=-1)
-    return mx.fast.scaled_dot_product_attention(q, k, v, scale=s, mask=tok[..., :Sq, :Sk])
+    # Whole query blocks per chunk, so each token mask stays under the budget.
+    blocks = max(1, compensation._MASK_ELEMENTS // (mb * mh * block_size * Sk))
+    outs = []
+    for c0 in range(0, Cq, blocks):
+        c1 = min(c0 + blocks, Cq)
+        r0, r1 = c0 * block_size, min(c1 * block_size, Sq)
+        tok = mx.repeat(mx.repeat(keep[..., c0:c1, :], block_size, axis=-2), block_size, axis=-1)
+        outs.append(
+            mx.fast.scaled_dot_product_attention(
+                q[:, :, r0:r1], k, v, scale=s, mask=tok[..., : r1 - r0, :Sk]
+            )
+        )
+    return outs[0] if len(outs) == 1 else mx.concatenate(outs, axis=2)
