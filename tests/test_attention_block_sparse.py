@@ -14,6 +14,7 @@ from mlx_arsenal.attention import (
     block_sparse_kernel_available,
     centroid_compensated_attention,
     centroid_threshold_block_mask,
+    compensation,
     invert_permutation,
     sliding_tile_block_mask,
     tile_labels,
@@ -200,6 +201,67 @@ class TestBlockSparseAttention:
         q, k, v = args.pop("q"), args.pop("k"), args.pop("v")
         with pytest.raises(ValueError, match=match):
             block_sparse_attention(q, k, v, **args)
+
+
+class TestRowChunking:
+    """Long inputs run in chunks of query rows; the result must not depend on the chunking."""
+
+    @staticmethod
+    def _spy(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+        sizes: list[int] = []
+        sdpa = mx.fast.scaled_dot_product_attention
+
+        def spy(*args: Any, **kw: Any) -> mx.array:
+            sizes.append(kw["mask"].size)
+            return sdpa(*args, **kw)
+
+        monkeypatch.setattr(mx.fast, "scaled_dot_product_attention", spy)
+        return sizes
+
+    @pytest.mark.parametrize("compensate", [True, False])
+    @pytest.mark.parametrize("lead", [(1, 1), (2, 3)])
+    @pytest.mark.parametrize("budget", [1, 3000])
+    def test_block_sparse_chunks_match_one_call(self, monkeypatch, compensate, lead, budget):
+        B, H, Sq, Sk, bs = 2, 3, 70, 53, 16
+        q, k, v = _qkv(B, H, Sq, Sk, 8, seed=11)
+        mask = _random_block_mask((*lead, 5, 4), seed=12, p_skip=0.4)
+        mask = mx.concatenate([mx.zeros((*lead, 5, 1)), mask[..., 1:]], axis=-1)  # no empty row
+        whole = block_sparse_attention(
+            q, k, v, block_mask=mask, block_size=bs, compensate=compensate
+        )
+        monkeypatch.setattr(compensation, "_MASK_ELEMENTS", budget)
+        sizes = self._spy(monkeypatch)
+        chunked = block_sparse_attention(
+            q, k, v, block_mask=mask, block_size=bs, compensate=compensate
+        )
+        assert len(sizes) > 1
+        per_row = lead[0] * lead[1] * (Sk + (4 if compensate else 0))
+        unit = per_row if compensate else per_row * bs  # one row, or one query block
+        assert max(sizes) <= max(budget, unit)
+        assert _close(chunked, whole)
+
+    @pytest.mark.parametrize("budget", [1, 2000])
+    def test_compensated_attention_chunks_match_one_call(self, monkeypatch, budget):
+        B, H, Sq, Sk = 1, 2, 45, 38
+        q, k, v = _qkv(B, H, Sq, Sk, 8, seed=13)
+        rng = np.random.default_rng(14)
+        ql = array_from_any(rng.integers(0, 4, size=Sq).astype(np.int32))
+        kl = array_from_any(rng.integers(0, 3, size=Sk).astype(np.int32))
+        mask = _random_block_mask((1, H, 4, 3), seed=15, p_skip=0.4)
+        whole = centroid_compensated_attention(q, k, v, q_labels=ql, k_labels=kl, block_mask=mask)
+        monkeypatch.setattr(compensation, "_MASK_ELEMENTS", budget)
+        sizes = self._spy(monkeypatch)
+        chunked = centroid_compensated_attention(q, k, v, q_labels=ql, k_labels=kl, block_mask=mask)
+        assert len(sizes) > 1
+        assert max(sizes) <= max(budget, H * (Sk + 3))
+        assert _close(chunked, whole)
+
+    def test_short_inputs_run_in_one_call(self, monkeypatch):
+        q, k, v = _qkv(1, 2, 64, 64, 8, seed=16)
+        mask = _random_block_mask((1, 2, 4, 4), seed=17, p_skip=0.3)
+        sizes = self._spy(monkeypatch)
+        block_sparse_attention(q, k, v, block_mask=mask, block_size=16)
+        assert len(sizes) == 1
 
 
 class TestPermutedBlocks:
