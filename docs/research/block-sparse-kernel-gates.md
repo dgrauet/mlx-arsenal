@@ -5,12 +5,12 @@ sets before the ltx-2-mlx Sol-Attn Metal kernel can move behind
 `block_sparse_attention`. Each entry is dated; the kernel stays in the port
 until all four pass.
 
-## Summary (2026-11-02)
+## Summary (2026-11-04)
 
 | Gate | Status |
 |---|---|
 | 1. Hardware and shapes | Partial: M1 Max and M2 Pro pass at head dim 64 and 128, float16 and bfloat16. No chip with GPU neural accelerators (M5 family) is available. |
-| 2. Second consumer | In progress: ERNIE-Image at 2048² runs through the arsenal router and the kernel, 1.42× per step. The image-quality run against dense is still to do. |
+| 2. Second consumer | Passed: ERNIE-Image at 2048², full 20-step render, 1.34× end to end against dense. The image is clean but not the dense image (PSNR 23.7 dB); the text-token block must stay routed (see below). |
 | 3. MLX coupling | Not yet a CI test, but the risk is lower than the October review assumed (see below). |
 | 4. Licence | Closed: the routing follows the Sol-Attn paper, not the unlicensed `sol-engine` code. |
 
@@ -71,9 +71,54 @@ length, from the third step on.
 A full step (36 layers, CFG batch of two) drops by 29 %, a 1.42× step
 speedup. The relative error of the routed attention against dense, on three
 layers of the last step, is 0.098, 0.162 and 0.077 (layers 2, 18, 34): this
-is the routing error at `τ = 1`, which the kernel reproduces exactly. Whether
-it is visible in the image needs a full trajectory against the dense render,
-which is the next step for this gate.
+is the routing error at `τ = 1`, which the kernel reproduces exactly.
+
+**Full render (2026-11-04).** 20 steps at 2048², seed 0, guidance 5, the
+first two steps dense and the other 18 routed. The router runs on the
+arsenal build with the fix of PR #122.
+
+| Run | Total seconds | Speedup | PSNR vs dense | PSNR at 1/32 |
+|---|---|---|---|---|
+| dense | 6111 | 1.00× | | |
+| routed, `τ = 1` | 4528 | 1.35× | 22.4 dB | 25.0 dB |
+| routed, `τ = 1`, text block always kept | 4577 | 1.34× | 23.7 dB | 26.8 dB |
+
+Routed steps take 214–224 s at a mean density of 0.21. The total includes
+the text encoder and the VAE decode. On the last step the kernel and the
+arsenal dense backend agree to four digits in relative error against dense
+attention (0.063, 0.054 and 0.069 on layers 2, 18 and 34 for the last run).
+
+Neither routed image shows block artefacts or blur. Both keep the dense
+image's layout and light, which the two dense steps fix, but the fox moves
+to the right and turns to face the camera. Low-pass PSNR stays near 25 dB
+because the subject itself differs, not because of fine-detail noise. At
+`τ = 1` the routed trajectory is a different sample of the same prompt, not
+an approximation of the dense one; a caller who needs the dense image needs
+a lower `τ` or more dense steps.
+
+**Text-token block.** The first routed render had a dark band 3–5 px wide
+on the left edge, up to 47 grey levels darker in the lower half, absent from
+the dense render and from the other three edges. A per-token comparison of
+routed and dense attention at step 2, over all 36 layers, located it:
+
+- ERNIE places the text tokens after the image tokens and gives them the
+  RoPE position `(y, x) = (0, 0)`. Image tokens in column 0 share `x = 0`
+  and give the text tokens more attention than other columns (33 % of
+  their attention against 15–16 % for columns 1, 64 and 127 on layer 33).
+- The 19 text tokens fill one key block of their own. The router decides
+  per query block of 64 tokens, of which one is in column 0, and on deep
+  layers it drops the text block for about 40 % of the query blocks. Column
+  0 then sees the text only through the block's centroid.
+- The column-0 error is on average 2.1× the image mean, and 10.5× on layer
+  33 of the conditioned branch. Keeping the text block for every query
+  block brings it to 1.14× (1.25× on layer 33). It also lowers the mean
+  error over the image from 0.123 to 0.116, for 0.004 more density.
+
+With the text block always kept, the band is gone: the left-edge columns
+are within 3.4 grey levels of their neighbours, as in the dense render. The
+fix belongs to the caller, which takes the union of the routed mask and the
+key blocks that hold conditioning tokens. Any model whose conditioning
+tokens share RoPE coordinates with image tokens should do the same.
 
 ## Gate 3: MLX coupling
 
