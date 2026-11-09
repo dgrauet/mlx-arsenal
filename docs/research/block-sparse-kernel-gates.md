@@ -5,13 +5,13 @@ sets before the ltx-2-mlx Sol-Attn Metal kernel can move behind
 `block_sparse_attention`. Each entry is dated; the kernel stays in the port
 until all four pass.
 
-## Summary (2026-11-04)
+## Summary (2026-11-06)
 
 | Gate | Status |
 |---|---|
 | 1. Hardware and shapes | Partial: M1 Max and M2 Pro pass at head dim 64 and 128, float16 and bfloat16. No chip with GPU neural accelerators (M5 family) is available. |
 | 2. Second consumer | Passed: ERNIE-Image at 2048², full 20-step render, 1.34× end to end against dense. The image is clean but not the dense image (PSNR 23.7 dB); the text-token block must stay routed (see below). |
-| 3. MLX coupling | Not yet a CI test, but the risk is lower than the October review assumed (see below). |
+| 3. MLX coupling | Passed: the kernel is staged in mlx-arsenal (private, not dispatched); CI builds it against the newest allowed `mlx` on every run and against MLX main every week. |
 | 4. Licence | Closed: the routing follows the Sol-Attn paper, not the unlicensed `sol-engine` code. |
 
 ## Gate 1: hardware and shapes
@@ -132,9 +132,29 @@ They do not touch it: on main at `55626cb` (72 commits after 0.32.4), none
 of the ten headers changed, and the kernel built against main's headers
 passes the probe and gives identical results.
 
-The CI test the gate asks for is still to write. The approach above is the
-template: fetch the headers of the newest allowed `mlx`, build, probe
-against dense SDPA.
+**CI tripwire (2026-11-06).** The kernel is staged as
+`mlx_arsenal/attention/_sol_kernel.py`: private, and not called by
+`block_sparse_attention` (`block_sparse_kernel_available` stays `False`
+until gate 1 closes). `tests/test_attention_sol_kernel.py` builds it and
+checks it:
+
+- every block routed against `mx.fast.scaled_dot_product_attention`, and
+  with skipped blocks against the dense backend of `block_sparse_attention`,
+  in float16, bfloat16 and float32 at head dim 64 and 128, with a partial
+  last block, per-batch and per-head routes, and more than one centroid
+  tile;
+- the set of inlined headers against the ten above, so that a change in
+  that set fails even when the kernel still builds.
+
+The CI workflow installs the newest `mlx` that `pyproject.toml` allows, so
+an MLX release that breaks the kernel fails the next run, including the
+Dependabot bump. The weekly `mlx-main-kernel` workflow runs the same file
+against the steel headers of MLX main (`MLX_ARSENAL_STEEL_INCLUDE`), so a
+breaking change shows up before the release that ships it. Locally both
+pass with MLX 0.32.4 and with main at `c69303b`. With every block routed at
+head dim 128 the kernel matches dense SDPA bit for bit (same steel loop);
+the worst errors otherwise are 2.4e-4 (float16), 2.0e-3 (bfloat16) and
+1.0e-7 (float32).
 
 **Dense backend bug found on the way.** On MLX ≤ 0.32.4, `mx.concatenate`
 returns wrong values past 2^31 output elements (fixed upstream in
