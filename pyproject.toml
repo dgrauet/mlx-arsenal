@@ -60,6 +60,10 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # N803/N806: tensor dims (B, C, H, W, T) are idiomatic uppercase in ML code.
 ignore = ["N803", "N806"]
 
+[tool.ruff.lint.per-file-ignores]
+# Metal source kept verbatim from MLX steel / ltx-2-mlx, so diffs against upstream stay readable.
+"src/mlx_arsenal/attention/_sol_kernel.py" = ["E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["slow: long-running GPU tests, deselected by default"]

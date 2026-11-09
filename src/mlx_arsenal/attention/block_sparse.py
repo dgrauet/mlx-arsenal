@@ -8,10 +8,11 @@ into. Its route is the additive block mask the selectors already return
 :func:`~mlx_arsenal.attention.centroid_threshold_block_mask`), over blocks of
 ``block_size`` consecutive tokens.
 
-No Metal kernel ships yet: :func:`block_sparse_kernel_available` is
+No Metal kernel is dispatched yet: :func:`block_sparse_kernel_available` is
 ``False`` and every call runs the dense backend, which is also the numerical
-reference for a future kernel. ADR-0002 lists the gates a kernel must pass
-before it moves here.
+reference for a kernel. ADR-0002 lists the gates a kernel must pass first;
+the candidate is staged, private, in ``_sol_kernel`` so CI can build it
+against each MLX release.
 """
 
 from __future__ import annotations
